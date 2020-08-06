@@ -12,6 +12,7 @@ import random
 import warnings
 from dataclasses import asdict
 from multiprocessing import cpu_count
+import sys
 
 import numpy as np
 import pandas as pd
@@ -86,6 +87,7 @@ except ImportError:
     wandb_available = False
 
 logger = logging.getLogger(__name__)
+logger.addHandler(logging.StreamHandler(sys.stdout))
 
 
 class ClassificationModel:
@@ -485,7 +487,6 @@ class ClassificationModel:
                         f"Epochs {epoch_number}/{args.num_train_epochs}. Running Loss: {current_loss:9.4f}"
                     )
                     logger.info(f"Epochs {epoch_number}/{args.num_train_epochs}. Running Loss: {current_loss:9.4f}")
-                    print(f"Epochs {epoch_number}/{args.num_train_epochs}. Running Loss: {current_loss:9.4f}")
 
                 if args.gradient_accumulation_steps > 1:
                     loss = loss / args.gradient_accumulation_steps
@@ -515,7 +516,6 @@ class ClassificationModel:
                         tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
                         tb_writer.add_scalar("loss", (tr_loss - logging_loss) / args.logging_steps, global_step)
                         logger.info(f"lr : {scheduler.get_lr()[0]}, loss : {(tr_loss - logging_loss) / args.logging_steps} at {global_step}")
-                        print(f"lr : {scheduler.get_lr()[0]}, loss : {(tr_loss - logging_loss) / args.logging_steps} at {global_step}")
                         logging_loss = tr_loss
                         if args.wandb_project:
                             wandb.log(
@@ -547,7 +547,6 @@ class ClassificationModel:
                         for key, value in results.items():
                             tb_writer.add_scalar("eval_{}".format(key), value, global_step)
                             logger.info(f"{key} {value} at {global_step}")
-                            print(f"{key} {value} at {global_step}")
 
                         output_dir_current = os.path.join(output_dir, "checkpoint-{}".format(global_step))
 
@@ -720,7 +719,6 @@ class ClassificationModel:
 
         if verbose:
             logger.info(self.results)
-            print(self.results)
 
         return result, model_outputs, wrong_preds
 
