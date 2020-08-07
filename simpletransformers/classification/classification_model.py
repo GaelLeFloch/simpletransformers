@@ -982,7 +982,7 @@ class ClassificationModel:
         for metric, func in kwargs.items():
             if ('top' in metric) and (probs is not None):
                 extra_metrics[metric] = func(labels, probs)
-            else: continue
+                continue
             extra_metrics[metric] = func(labels, preds)
 
         mismatched = labels != preds
