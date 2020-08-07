@@ -1246,11 +1246,13 @@ class ClassificationModel:
             output_dir = self.args.output_dir
         os.makedirs(output_dir, exist_ok=True)
 
-        logger.info('Saving model ...')
+        logger.info('Saving model ???')
         logger.info(f"No save {self.args.no_save}")
-        logger.info(f"Model ? {model is None}")
+        logger.info(f"Model ? {model is not None}")
+        logger.info(f"TF ? {model and not self.args.no_save}")
 
         if model and not self.args.no_save:
+            logger.info('Saving model ...')
             # Take care of distributed/parallel training
             model_to_save = model.module if hasattr(model, "module") else model
             model_to_save.save_pretrained(output_dir)
