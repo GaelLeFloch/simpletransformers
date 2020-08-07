@@ -979,7 +979,7 @@ class ClassificationModel:
         else:
             return dataset
 
-    def compute_metrics(self, preds, labels, eval_examples=None, multi_label=False, **kwargs):
+    def compute_metrics(self, preds, labels, eval_examples=None, multi_label=False, probs=None, **kwargs):
         """
         Computes the evaluation metrics for the model predictions.
 
@@ -999,6 +999,9 @@ class ClassificationModel:
 
         extra_metrics = {}
         for metric, func in kwargs.items():
+            if ('top' in metric) and (probs is not None):
+                extra_metrics[metric] = func(labels, probs)
+            else: continue
             extra_metrics[metric] = func(labels, preds)
 
         mismatched = labels != preds
