@@ -618,6 +618,8 @@ class ClassificationModel:
                 )
 
                 # self._save_model(output_dir_current, optimizer, scheduler, results=results)
+                for key, value in results.items():
+                    logger.info(f"{key} {value} at {global_step}")
 
                 if args.wandb_project:
                     wandb.log(self._get_last_metrics(training_progress_scores))
