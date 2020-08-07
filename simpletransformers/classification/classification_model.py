@@ -437,8 +437,8 @@ class ClassificationModel:
             except ValueError:
                 logger.info("   Starting fine-tuning.")
 
-        if args.evaluate_during_training:
-            training_progress_scores = self._create_training_progress_scores(multi_label, **kwargs)
+        # if args.evaluate_during_training:
+        #     training_progress_scores = self._create_training_progress_scores(multi_label, **kwargs)
 
         if args.wandb_project:
             wandb.init(project=args.wandb_project, config={**asdict(args)}, **args.wandb_kwargs)
@@ -553,18 +553,6 @@ class ClassificationModel:
                         if args.save_eval_checkpoints:
                             self._save_model(output_dir_current, optimizer, scheduler, model=model, results=results)
 
-                        training_progress_scores["global_step"].append(global_step)
-                        training_progress_scores["train_loss"].append(current_loss)
-                        for key in results:
-                            training_progress_scores[key].append(results[key])
-                        report = pd.DataFrame(training_progress_scores)
-                        report.to_csv(
-                            os.path.join(args.output_dir, "training_progress_scores.csv"), index=False,
-                        )
-
-                        if args.wandb_project:
-                            wandb.log(self._get_last_metrics(training_progress_scores))
-
                         if not best_eval_metric:
                             best_eval_metric = results[args.early_stopping_metric]
                             self._save_model(args.best_model_dir, optimizer, scheduler, model=model, results=results)
@@ -630,13 +618,6 @@ class ClassificationModel:
                 )
 
                 # self._save_model(output_dir_current, optimizer, scheduler, results=results)
-
-                training_progress_scores["global_step"].append(global_step)
-                training_progress_scores["train_loss"].append(current_loss)
-                for key in results:
-                    training_progress_scores[key].append(results[key])
-                report = pd.DataFrame(training_progress_scores)
-                report.to_csv(os.path.join(args.output_dir, "training_progress_scores.csv"), index=False)
 
                 if args.wandb_project:
                     wandb.log(self._get_last_metrics(training_progress_scores))
@@ -838,7 +819,7 @@ class ClassificationModel:
             if not multi_label:
                 preds = np.argmax(preds, axis=1)
 
-        result, wrong = self.compute_metrics(preds, out_label_ids, eval_examples, **kwargs)
+        result, wrong = self.compute_metrics(preds, out_label_ids, eval_examples, probs=model_outputs, **kwargs)
         result["eval_loss"] = eval_loss
         results.update(result)
 
