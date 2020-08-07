@@ -312,7 +312,7 @@ class ClassificationModel:
         # model_to_save.save_pretrained(output_dir)
         # self.tokenizer.save_pretrained(output_dir)
         # torch.save(self.args, os.path.join(output_dir, "training_args.bin"))
-        self._save_model(model=self.model)
+        self._save_model(output_dir=output_dir ,model=self.model)
 
         if verbose:
             logger.info(" Training of {} model complete. Saved to {}.".format(self.args.model_type, output_dir))
@@ -1250,6 +1250,7 @@ class ClassificationModel:
         logger.info(f"No save {self.args.no_save}")
         logger.info(f"Model ? {model is not None}")
         logger.info(f"TF ? {model and not self.args.no_save}")
+        logger.info(f"Output dir : {self.args.output_dir}")
 
         if model and not self.args.no_save:
             logger.info('Saving model ...')
