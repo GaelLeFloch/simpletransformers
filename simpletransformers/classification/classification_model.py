@@ -555,7 +555,7 @@ class ClassificationModel:
 
                         if not best_eval_metric:
                             best_eval_metric = results[args.early_stopping_metric]
-                            self._save_model(args.best_model_dir, optimizer, scheduler, model=model, results=results)
+                            # self._save_model(args.best_model_dir, optimizer, scheduler, model=model, results=results)
                         if best_eval_metric and args.early_stopping_metric_minimize:
                             if best_eval_metric - results[args.early_stopping_metric] > args.early_stopping_delta:
                                 best_eval_metric = results[args.early_stopping_metric]
@@ -1229,12 +1229,6 @@ class ClassificationModel:
         if not output_dir:
             output_dir = self.args.output_dir
         os.makedirs(output_dir, exist_ok=True)
-
-        logger.info('Saving model ???')
-        logger.info(f"No save {self.args.no_save}")
-        logger.info(f"Model ? {model is not None}")
-        logger.info(f"TF ? {model and not self.args.no_save}")
-        logger.info(f"Output dir : {self.args.output_dir}")
 
         if model and not self.args.no_save:
             logger.info('Saving model ...')
