@@ -571,9 +571,9 @@ class ClassificationModel:
                         if best_eval_metric and args.early_stopping_metric_minimize:
                             if best_eval_metric - results[args.early_stopping_metric] > args.early_stopping_delta:
                                 best_eval_metric = results[args.early_stopping_metric]
-                                self._save_model(
-                                    args.best_model_dir, optimizer, scheduler, model=model, results=results
-                                )
+                                # self._save_model(
+                                #     args.best_model_dir, optimizer, scheduler, model=model, results=results
+                                # )
                                 early_stopping_counter = 0
                             else:
                                 if args.use_early_stopping:
@@ -592,9 +592,9 @@ class ClassificationModel:
                         else:
                             if results[args.early_stopping_metric] - best_eval_metric > args.early_stopping_delta:
                                 best_eval_metric = results[args.early_stopping_metric]
-                                self._save_model(
-                                    args.best_model_dir, optimizer, scheduler, model=model, results=results
-                                )
+                                # self._save_model(
+                                #     args.best_model_dir, optimizer, scheduler, model=model, results=results
+                                # )
                                 early_stopping_counter = 0
                             else:
                                 if args.use_early_stopping:
@@ -629,7 +629,7 @@ class ClassificationModel:
                     **kwargs,
                 )
 
-                self._save_model(output_dir_current, optimizer, scheduler, results=results)
+                # self._save_model(output_dir_current, optimizer, scheduler, results=results)
 
                 training_progress_scores["global_step"].append(global_step)
                 training_progress_scores["train_loss"].append(current_loss)
@@ -643,11 +643,11 @@ class ClassificationModel:
 
                 if not best_eval_metric:
                     best_eval_metric = results[args.early_stopping_metric]
-                    self._save_model(args.best_model_dir, optimizer, scheduler, model=model, results=results)
+                    # self._save_model(args.best_model_dir, optimizer, scheduler, model=model, results=results)
                 if best_eval_metric and args.early_stopping_metric_minimize:
                     if best_eval_metric - results[args.early_stopping_metric] > args.early_stopping_delta:
                         best_eval_metric = results[args.early_stopping_metric]
-                        self._save_model(args.best_model_dir, optimizer, scheduler, model=model, results=results)
+                        # self._save_model(args.best_model_dir, optimizer, scheduler, model=model, results=results)
                         early_stopping_counter = 0
                     else:
                         if args.use_early_stopping and args.early_stopping_consider_epochs:
@@ -666,7 +666,7 @@ class ClassificationModel:
                 else:
                     if results[args.early_stopping_metric] - best_eval_metric > args.early_stopping_delta:
                         best_eval_metric = results[args.early_stopping_metric]
-                        self._save_model(args.best_model_dir, optimizer, scheduler, model=model, results=results)
+                        # self._save_model(args.best_model_dir, optimizer, scheduler, model=model, results=results)
                         early_stopping_counter = 0
                     else:
                         if args.use_early_stopping and args.early_stopping_consider_epochs:
