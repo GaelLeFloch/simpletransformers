@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 from torch import nn
 from transformers import FlaubertConfig, FlaubertTokenizer
@@ -1062,7 +1063,7 @@ class ClassificationTabModel:
         else:
             return {**{"mcc": mcc}, **extra_metrics}, wrong
 
-    def predict(self, to_predict, multi_label=False):
+    def predict(self, to_predict, xs, multi_label=False):
         """
         Performs predictions on a list of text.
 
@@ -1097,11 +1098,14 @@ class ClassificationTabModel:
                 eval_examples, evaluate=True, multi_label=multi_label, no_cache=True
             )
 
-            # all_input_ids, all_input_mask, all_segment_ids, all_label_ids = self.load_and_cache_examples(train_examples, verbose=verbose)
+            all_input_ids, all_input_mask, all_segment_ids, all_label_ids = self.load_and_cache_examples(
+                eval_examples, evaluate=True, multi_label=multi_label, no_cache=True
+            )
 
             # # Add Xs
             # X_s = list(train_df.columns[train_df.columns.str.contains('x_')])
-            # torch_xs = torch.tensor(train_df[X_s].values, dtype=torch.long)
+            torch_xs = torch.tensor(xs, dtype=torch.long)
+            eval_dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids, torch_xs)
 
         eval_sampler = SequentialSampler(eval_dataset)
         eval_dataloader = DataLoader(eval_dataset, sampler=eval_sampler, batch_size=args.eval_batch_size)
