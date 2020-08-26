@@ -1094,10 +1094,6 @@ class ClassificationTabModel:
         if args.sliding_window:
             eval_dataset, window_counts = self.load_and_cache_examples(eval_examples, evaluate=True, no_cache=True)
         else:
-            eval_dataset = self.load_and_cache_examples(
-                eval_examples, evaluate=True, multi_label=multi_label, no_cache=True
-            )
-
             all_input_ids, all_input_mask, all_segment_ids, all_label_ids = self.load_and_cache_examples(
                 eval_examples, evaluate=True, multi_label=multi_label, no_cache=True
             )
