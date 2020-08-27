@@ -147,7 +147,7 @@ logger.addHandler(logging.StreamHandler(sys.stdout))
 
 class ClassificationTabModel:
     def __init__(
-        self, model_type, model_name, xs_dim, num_labels=None, weight=None, args=None, use_cuda=True, cuda_device=-1, **kwargs,
+        self, model_type, model_name, xs_dim=None, num_labels=None, weight=None, args=None, use_cuda=True, cuda_device=-1, **kwargs,
     ):
 
         """
@@ -170,6 +170,11 @@ class ClassificationTabModel:
             self.args.update_from_dict(args)
         elif isinstance(args, ClassificationArgs):
             self.args = args
+        
+        if xs_dim:
+            self.args.update_from_dict({'xs_dim':xs_dim})
+        elif not hasattr(self.args, 'xs_dim'):
+            raise ValueError("Need 'xs_dim' if not set in the pretrained model")
 
         if "sweep_config" in kwargs:
             sweep_config = kwargs.pop("sweep_config")
@@ -226,7 +231,7 @@ class ClassificationTabModel:
                 model_name, config=self.config, weight=torch.Tensor(self.weight).to(self.device), **kwargs,
             )
         else:
-            self.model = model_class.from_pretrained(model_name, config=self.config, xs_dim=xs_dim, **kwargs)
+            self.model = model_class.from_pretrained(model_name, config=self.config, xs_dim=self.args.xs_dim, **kwargs)
 
         self.results = {}
 
