@@ -454,11 +454,13 @@ class ClassificationTabModel:
         )
 
         if args.n_gpu > 1:
-            model = torch.nn.DataParallel(model)
+            # model = torch.nn.DataParallel(model)
+            model = torch.nn.DistibutedDataParallel(model)
 
         global_step = 0
         tr_loss, logging_loss = 0.0, 0.0
-        model.zero_grad()
+        # model.zero_grad()
+        for param in model.parameters(): param.grad = None
         train_iterator = trange(int(args.num_train_epochs), desc="Epoch", disable=args.silent, mininterval=0)
         epoch_number = 0
         best_eval_metric = None
@@ -559,7 +561,8 @@ class ClassificationTabModel:
                     else:
                         optimizer.step()
                     scheduler.step()  # Update learning rate schedule
-                    model.zero_grad()
+                    # model.zero_grad()
+                    for param in model.parameters(): param.grad = None
                     global_step += 1
 
                     if args.logging_steps > 0 and global_step % args.logging_steps == 0:
