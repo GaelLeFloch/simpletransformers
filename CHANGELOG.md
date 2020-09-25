@@ -4,6 +4,105 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.48.5] - 2020-09-17
+
+### Added
+
+- Added `convert_to_onnx` function to the following models:
+  - ClassificationModel
+  - NERModel
+- Converted ONNX models can be loaded (requires specifying `onnx: True` in model_args) and used for prediction.
+- Added `fp16` support for evaluation and prediction (requires Pytorch >= 1.6) for the following models:
+  - ClassificationModel
+  - NERModel
+  - QuestionAnsweringModel
+  - Seq2Seq
+  - T5Model
+  - ConvAI
+  - MultiModalClassificationModel
+- Added multigpu prediction/eval in
+  - ClassificationModel
+  - MultiModalClassificationModel
+  - ConvAI
+  - NERModel
+  - QuestionAnsweringModel
+  - Seq2Seq
+  - T5Model
+
+### Fixed
+
+- Thread count can now be specified for MultiLabelClassificationModel.
+
+
+## [0.48.4] - 2020-09-23
+
+### Fixed
+
+- Fixed compatibility issue with transformers 3.2. (BertPreTrainedModel was being imported from an incompatible path)
+
+## [0.48.3] - 2020-09-08
+
+- Version numbering issue fixed.
+
+## [0.48.2] - 2020-09-08
+
+### Fixed
+
+- Fixed missing `padding_strategy` argument in `squad_convert_example_to_features()`
+
+## [0.48.1] - 2020-09-08
+
+### Fixed
+
+- Bug when using sliding window with multiclass classification
+- Bug in ConvAI where model was being accessed before being created
+
+## [0.48.0] - 2020-09-06
+
+### Added
+
+- Added dynamic quantization support for all models.
+- Added ConvAI docs to documentation website. [@pablonm3](https://github.com/pablonm3)
+
+## [0.47.6] - 2020-09-01
+
+### Fixed
+
+- Fixed missing `padding_strategy` argument in `squad_convert_example_to_features()` [cahya-wirawan](https://github.com/cahya-wirawan)
+
+## [0.47.5] - 2020-09-01
+
+### Added
+
+- Added dynamic quantization, `thread_count` arg, and avoids padding during inference for Classification models. [karthik19967829](https://github.com/karthik19967829)
+-
+### Fixed
+
+- Bug fix which fixes reprocessing data after reading from cache in Seq2SeqDataset and SimpleSummarizationDataset [@Zhylkaaa](https://github.com/Zhylkaaa)
+
+## [0.47.4] - 2020-08-29
+
+### Fixed
+
+- Bug fix in MultilabelClassificationModel when using sentence pairs.
+
+## [0.47.3] - 2020-08-19
+
+### Fixed
+
+- Bug fix in ConvAI [Sxela](https://github.com/Sxela)
+
+## [0.47.0] - 2020-08-09
+
+### Added
+
+- Added support for testing models through a Streamlit app. Use the command `simple-viewer". Currently supports:
+  - Classification (including multilabel)
+  - NER (design inspired by [displaCy Named Entity Visualizer](https://explosion.ai/demos/displacy-ent))
+  - QA
+
+See [docs](https://simpletransformers.ai/docs/tips-and-tricks/#simple-viewer-visualizing-model-predictions-with-streamlit) for details.
+
 ## [0.46.5] - 2020-08-05
 
 ### Changed
@@ -1034,7 +1133,21 @@ Model checkpoint is now saved for all epochs again.
 
 - This CHANGELOG file to hopefully serve as an evolving example of a standardized open source project CHANGELOG.
 
-[0.46.5]: https://github.com/ThilinaRajapakse/simpletransformers/compare/2cc77f7...HEAD
+[0.48.5]: https://github.com/ThilinaRajapakse/simpletransformers/compare/39d25d0...HEAD
+
+[0.48.4]: https://github.com/ThilinaRajapakse/simpletransformers/compare/7ef56b0...39d25d0
+
+[0.48.1]: https://github.com/ThilinaRajapakse/simpletransformers/compare/8c1ae68...7ef56b0
+
+[0.48.0]: https://github.com/ThilinaRajapakse/simpletransformers/compare/d62ce56...0f678f2
+
+[0.47.4]: https://github.com/ThilinaRajapakse/simpletransformers/compare/bd4c397...d62ce56
+
+[0.47.3]: https://github.com/ThilinaRajapakse/simpletransformers/compare/78ffa94...bd4c397
+
+[0.47.0]: https://github.com/ThilinaRajapakse/simpletransformers/compare/d405b4a...78ffa94
+
+[0.46.5]: https://github.com/ThilinaRajapakse/simpletransformers/compare/2cc77f7...d405b4a
 
 [0.46.3]: https://github.com/ThilinaRajapakse/simpletransformers/compare/7f37cb7...2cc77f7
 

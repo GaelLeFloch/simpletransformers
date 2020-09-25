@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setup(
     name="simpletransformers",
-    version="0.46.6",
+    version="0.48.5",
     author="Thilina Rajapakse",
     author_email="chaturangarajapakshe@gmail.com",
     description="An easy-to-use wrapper library for the Transformers library.",
@@ -13,6 +13,7 @@ setup(
     long_description_content_type="text/markdown",
     url="https://github.com/ThilinaRajapakse/simpletransformers/",
     packages=find_packages(),
+    scripts=["bin/simple-viewer"],
     classifiers=[
         "Intended Audience :: Science/Research",
         "License :: OSI Approved :: Apache Software License",
@@ -33,5 +34,6 @@ setup(
         "pandas",
         "tokenizers",
         "wandb",
+        "streamlit",
     ],
 )

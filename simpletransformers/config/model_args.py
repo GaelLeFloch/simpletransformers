@@ -24,12 +24,12 @@ class ModelArgs:
     adam_epsilon: float = 1e-8
     best_model_dir: str = "outputs/best_model"
     cache_dir: str = "cache_dir/"
+    config: dict = field(default_factory=dict)
     custom_layer_parameters: list = field(default_factory=list)
     custom_parameter_groups: list = field(default_factory=list)
-    train_custom_parameters_only: bool = False
-    config: dict = field(default_factory=dict)
     dataloader_num_workers: int = field(default_factory=get_default_process_count)
     do_lower_case: bool = False
+    dynamic_quantize: bool = False
     early_stopping_consider_epochs: bool = False
     early_stopping_delta: float = 0
     early_stopping_metric: str = "eval_loss"
@@ -49,6 +49,8 @@ class ModelArgs:
     manual_seed: int = None
     max_grad_norm: float = 1.0
     max_seq_length: int = 128
+    model_name: str = None
+    model_type: str = None
     multiprocessing_chunksize: int = 500
     n_gpu: int = 1
     no_cache: bool = False
@@ -57,15 +59,18 @@ class ModelArgs:
     output_dir: str = "outputs/"
     overwrite_output_dir: bool = False
     process_count: int = field(default_factory=get_default_process_count)
+    quantized_model: bool = False
     reprocess_input_data: bool = True
     save_best_model: bool = True
     save_eval_checkpoints: bool = True
     save_model_every_epoch: bool = True
-    save_steps: int = 2000
     save_optimizer_and_scheduler: bool = True
+    save_steps: int = 2000
     silent: bool = False
     tensorboard_dir: str = None
+    thread_count: int = None
     train_batch_size: int = 8
+    train_custom_parameters_only: bool = False
     use_cached_eval_features: bool = False
     use_early_stopping: bool = False
     use_multiprocessing: bool = True
@@ -103,6 +108,7 @@ class ClassificationArgs(ModelArgs):
     Model args for a ClassificationModel
     """
 
+    model_class: str = "ClassificationModel"
     labels_list: list = field(default_factory=list)
     labels_map: dict = field(default_factory=dict)
     lazy_delimiter: str = "\t"
@@ -112,6 +118,7 @@ class ClassificationArgs(ModelArgs):
     lazy_text_a_column: bool = None
     lazy_text_b_column: bool = None
     lazy_text_column: int = 0
+    onnx: bool = False
     regression: bool = False
     sliding_window: bool = False
     stride: float = 0.8
@@ -124,6 +131,7 @@ class MultiLabelClassificationArgs(ModelArgs):
     Model args for a MultiLabelClassificationModel
     """
 
+    model_class: str = "MultiLabelClassificationModel"
     sliding_window: bool = False
     stride: float = 0.8
     threshold: float = 0.5
@@ -139,10 +147,12 @@ class NERArgs(ModelArgs):
     Model args for a NERModel
     """
 
+    model_class: str = "NERModel"
     classification_report: bool = False
     labels_list: list = field(default_factory=list)
     lazy_loading: bool = False
     lazy_loading_start_line: int = 0
+    onnx: bool = False
 
 
 @dataclass
@@ -151,6 +161,7 @@ class QuestionAnsweringArgs(ModelArgs):
     Model args for a QuestionAnsweringModel
     """
 
+    model_class: str = "QuestionAnsweringModel"
     doc_stride: int = 384
     early_stopping_metric: str = "correct"
     early_stopping_metric_minimize: bool = False
@@ -167,6 +178,7 @@ class T5Args(ModelArgs):
     Model args for a T5Model
     """
 
+    model_class: str = "T5Model"
     dataset_class: Dataset = None
     do_sample: bool = False
     early_stopping: bool = True
@@ -189,6 +201,7 @@ class LanguageModelingArgs(ModelArgs):
     Model args for a LanguageModelingModel
     """
 
+    model_class: str = "LanguageModelingModel"
     block_size: int = -1
     config_name: str = None
     dataset_class: Dataset = None
@@ -218,6 +231,7 @@ class Seq2SeqArgs(ModelArgs):
     Model args for a Seq2SeqModel
     """
 
+    model_class: str = "Seq2SeqModel"
     base_marian_model_name: str = None
     dataset_class: Dataset = None
     do_sample: bool = False
@@ -240,6 +254,7 @@ class LanguageGenerationArgs(ModelArgs):
     Model args for a LanguageGenerationModel
     """
 
+    model_class: str = "LanguageGenerationModel"
     do_sample: bool = True
     early_stopping: bool = True
     evaluate_generated_text: bool = False
@@ -266,6 +281,7 @@ class ConvAIArgs(ModelArgs):
     Model args for a ConvAIModel
     """
 
+    model_class: str = "ConvAIModel"
     do_sample: bool = True
     lm_coef: float = 2.0
     max_history: int = 2
@@ -285,6 +301,7 @@ class MultiModalClassificationArgs(ModelArgs):
     Model args for a MultiModalClassificationModel
     """
 
+    model_class: str = "MultiModalClassificationModel"
     regression: bool = False
     num_image_embeds: int = 1
     text_label: str = "text"

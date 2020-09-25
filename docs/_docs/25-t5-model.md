@@ -2,7 +2,7 @@
 title: T5 Model
 permalink: /docs/t5-model/
 excerpt: "T5Model for T5 tasks."
-last_modified_at: 2020/07/21 14:14:31
+last_modified_at: 2020/08/18 21:47:44
 toc: true
 ---
 
@@ -53,7 +53,7 @@ model = T5Model(
 | num_return_sequences        | int     | 1       | The number of samples to generate.                                                                                                                |
 | preprocess_inputs           | bool    | True    | Automatically add : and < /s> tokens to train_model() and eval_model() inputs. Automatically add < /s> to each string in to_predict in predict(). |
 | repetition_penalty          | float   | 1.0     | The parameter for repetition penalty. Between 1.0 and infinity. 1.0 means no penalty. Default to 1.0.                                             |
-| top_k                       | float   | None    | Filter top-k tokens before sampling (<=0: no filtering)                                                                                           |
+| top_k                       | int   | None    | Filter top-k tokens before sampling (<=0: no filtering)                                                                                           |
 | top_p                       | float   | None    | Nucleus filtering (top-p) before sampling (<=0.0: no filtering)                                                                                   |
 | use_multiprocessed_decoding | bool    | True    | Use multiprocessing when decoding outputs. Significantly speeds up decoding (CPU intensive).                                                      |                                               |
 
@@ -145,7 +145,7 @@ A metric function should take in two parameters. The first parameter will be the
 **Note:** For more details on evaluating T5 models with custom metrics, please refer to the [Evaluating Generated Sequences](/docs/t5-specifics/#evaluating-generated-sequences) section.
 {: .notice--info}
 
-**Note:** For more details on training models with Simple Transformers, please refer to the [Tips and Tricks](/docs/usage/#tips-and-tricks) section.
+**Note:** For more details on training models with Simple Transformers, please refer to the [Tips and Tricks](/docs/tips-and-tricks) section.
 {: .notice--info}
 
 
@@ -195,7 +195,7 @@ A metric function should take in two parameters. The first parameter will be the
 **Note:** For more details on evaluating T5 models with custom metrics, please refer to the [Evaluating Generated Sequences](/docs/t5-specifics/#evaluating-generated-sequences) section.
 {: .notice--info}
 
-**Note:** For more details on evaluating models with Simple Transformers, please refer to the [Tips and Tricks](/docs/usage/#tips-and-tricks) section.
+**Note:** For more details on evaluating models with Simple Transformers, please refer to the [Tips and Tricks](/docs/tips-and-tricks) section.
 {: .notice--info}
 
 ## Making Predictions With a `T5Model`
