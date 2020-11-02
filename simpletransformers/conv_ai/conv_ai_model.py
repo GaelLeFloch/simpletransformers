@@ -42,11 +42,16 @@ from transformers import (
     OpenAIGPTDoubleHeadsModel,
     OpenAIGPTTokenizer,
     get_linear_schedule_with_warmup,
+    BlenderbotSmallTokenizer,
+    BlenderbotForConditionalGeneration,
+    BlenderbotTokenizer,
+    BlenderbotConfig,
 )
 
 from simpletransformers.classification.classification_utils import InputExample, convert_examples_to_features
 from simpletransformers.config.global_args import global_args
 from simpletransformers.config.model_args import ConvAIArgs
+from simpletransformers.config.utils import sweep_config_to_sweep_values
 from simpletransformers.conv_ai.conv_ai_utils import get_dataset
 
 try:
@@ -89,6 +94,8 @@ class ConvAIModel:
         MODEL_CLASSES = {
             "gpt": (OpenAIGPTConfig, OpenAIGPTDoubleHeadsModel, OpenAIGPTTokenizer),
             "gpt2": (GPT2Config, GPT2DoubleHeadsModel, GPT2Tokenizer),
+            "blender-small": (BlenderbotConfig, BlenderbotForConditionalGeneration, BlenderbotSmallTokenizer),
+            "blender": (BlenderbotConfig, BlenderbotForConditionalGeneration, BlenderbotTokenizer),
         }
 
         self.args = self._load_model_args(model_name)
@@ -100,7 +107,7 @@ class ConvAIModel:
 
         if "sweep_config" in kwargs:
             sweep_config = kwargs.pop("sweep_config")
-            sweep_values = {key: value["value"] for key, value in sweep_config.as_dict().items() if key != "_wandb"}
+            sweep_values = sweep_config_to_sweep_values(sweep_config)
             self.args.update_from_dict(sweep_values)
 
         if self.args.manual_seed:
@@ -179,8 +186,12 @@ class ConvAIModel:
                 If not given when evaluate_during_training is enabled, the evaluation data from PERSONA-CHAT will be used.
             **kwargs:
         Returns:
-            None
+            global_step: Number of global steps trained
+            training_details: Average training loss if evaluate_during_training is False or full training progress scores if evaluate_during_training is True
         """  # noqa: ignore flake8"
+
+        if self.args.model_type in ["blender-small", "blender"]:
+            raise ValueError("Fine-tuning of Blender models is not currently supported.")
 
         if args:
             self.args.update_from_dict(args)
@@ -212,7 +223,7 @@ class ConvAIModel:
 
         os.makedirs(output_dir, exist_ok=True)
 
-        global_step, tr_loss = self.train(
+        global_step, training_details = self.train(
             train_dataloader,
             output_dir,
             show_running_loss=show_running_loss,
@@ -309,6 +320,7 @@ class ConvAIModel:
             model = torch.nn.DataParallel(model)
 
         global_step = 0
+        training_progress_scores = None
         tr_loss, logging_loss = 0.0, 0.0
         model.zero_grad()
         train_iterator = trange(int(args.num_train_epochs), desc="Epoch", disable=args.silent)
@@ -328,8 +340,8 @@ class ConvAIModel:
 
             scaler = amp.GradScaler()
 
-        model.train()
         for _ in train_iterator:
+            model.train()
             train_iterator.set_description(f"Epoch {epoch_number + 1} of {args.num_train_epochs}")
             batch_iterator = tqdm(
                 train_dataloader,
@@ -396,14 +408,14 @@ class ConvAIModel:
 
                     if args.logging_steps > 0 and global_step % args.logging_steps == 0:
                         # Log metrics
-                        tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
+                        tb_writer.add_scalar("lr", scheduler.get_last_lr()[0], global_step)
                         tb_writer.add_scalar("loss", (tr_loss - logging_loss) / args.logging_steps, global_step)
                         logging_loss = tr_loss
                         if args.wandb_project:
                             wandb.log(
                                 {
                                     "Training loss": current_loss,
-                                    "lr": scheduler.get_lr()[0],
+                                    "lr": scheduler.get_last_lr()[0],
                                     "global_step": global_step,
                                 }
                             )
@@ -466,7 +478,12 @@ class ConvAIModel:
                                             logger.info(f" Patience of {args.early_stopping_patience} steps reached")
                                             logger.info(" Training terminated.")
                                             train_iterator.close()
-                                        return global_step, tr_loss / global_step
+                                        return (
+                                            global_step,
+                                            tr_loss / global_step
+                                            if not self.args.evaluate_during_training
+                                            else training_progress_scores,
+                                        )
                         else:
                             if results[args.early_stopping_metric] - best_eval_metric > args.early_stopping_delta:
                                 best_eval_metric = results[args.early_stopping_metric]
@@ -485,7 +502,12 @@ class ConvAIModel:
                                             logger.info(f" Patience of {args.early_stopping_patience} steps reached")
                                             logger.info(" Training terminated.")
                                             train_iterator.close()
-                                        return global_step, tr_loss / global_step
+                                        return (
+                                            global_step,
+                                            tr_loss / global_step
+                                            if not self.args.evaluate_during_training
+                                            else training_progress_scores,
+                                        )
 
             epoch_number += 1
             output_dir_current = os.path.join(output_dir, "checkpoint-{}-epoch-{}".format(global_step, epoch_number))
@@ -496,7 +518,7 @@ class ConvAIModel:
             if args.save_model_every_epoch:
                 self.save_model(output_dir_current, model=model)
 
-            if args.evaluate_during_training:
+            if args.evaluate_during_training and args.evaluate_each_epoch:
                 results, _, _ = self.eval_model(
                     eval_dataloader, verbose=verbose and args.evaluate_during_training_verbose, silent=True, **kwargs,
                 )
@@ -527,7 +549,10 @@ class ConvAIModel:
                         self.save_model(args.best_model_dir, model=model, results=results)
                         early_stopping_counter = 0
 
-        return global_step, tr_loss / global_step
+        return (
+            global_step,
+            tr_loss / global_step if not self.args.evaluate_during_training else training_progress_scores,
+        )
 
     def eval_model(self, eval_file=None, output_dir=None, verbose=True, silent=False, **kwargs):
         """
@@ -758,20 +783,24 @@ class ConvAIModel:
 
         self._move_model_to_device()
 
-        if not personality:
-            dataset = get_dataset(
-                tokenizer,
-                None,
-                args.cache_dir,
-                process_count=process_count,
-                proxies=self.__dict__.get("proxies", None),
-                interact=True,
-                args=args,
-            )
-            personalities = [dialog["personality"] for dataset in dataset.values() for dialog in dataset]
-            personality = random.choice(personalities)
+        if self.args.model_type in ["blender", "blender-small"]:
+            if not personality:
+                personality = []
         else:
-            personality = [tokenizer.encode(s.lower()) for s in personality]
+            if not personality:
+                dataset = get_dataset(
+                    tokenizer,
+                    None,
+                    args.cache_dir,
+                    process_count=process_count,
+                    proxies=self.__dict__.get("proxies", None),
+                    interact=True,
+                    args=args,
+                )
+                personalities = [dialog["personality"] for dataset in dataset.values() for dialog in dataset]
+                personality = random.choice(personalities)
+            else:
+                personality = [tokenizer.encode(s.lower()) for s in personality]
 
         history = []
         while True:
@@ -779,7 +808,7 @@ class ConvAIModel:
             while not raw_text:
                 print("Prompt should not be empty!")
                 raw_text = input(">>> ")
-            history.append(tokenizer.encode(raw_text))
+            history.append(tokenizer.encode(raw_text) if self.args.model_type not in ["blender", "blender-small"] else raw_text)
             with torch.no_grad():
                 if args.fp16:
                     with amp.autocast():
@@ -788,8 +817,12 @@ class ConvAIModel:
                     out_ids = self.sample_sequence(personality, history, tokenizer, model, args)
             history.append(out_ids)
             history = history[-(2 * args.max_history + 1) :]
-            out_text = tokenizer.decode(out_ids, skip_special_tokens=True)
+            if self.args.model_type in ["blender", "blender-small"]:
+                out_text = out_ids
+            else:
+                out_text = tokenizer.decode(out_ids, skip_special_tokens=self.args.skip_special_tokens)
             print(out_text)
+            print(history)
 
     def interact_single(self, message, history, personality=None, encode_history=True):
         """
@@ -842,7 +875,7 @@ class ConvAIModel:
                     out_ids = self.sample_sequence(personality, history, tokenizer, model, args)
             else:
                 out_ids = self.sample_sequence(personality, history, tokenizer, model, args)
-        out_text = tokenizer.decode(out_ids, skip_special_tokens=True)
+        out_text = tokenizer.decode(out_ids, skip_special_tokens=self.args.skip_special_tokens)
 
         if encode_history:
             raw_history.append(out_text)
@@ -968,34 +1001,46 @@ class ConvAIModel:
         return logits
 
     def sample_sequence(self, personality, history, tokenizer, model, args, current_output=None):
-        special_tokens_ids = tokenizer.convert_tokens_to_ids(SPECIAL_TOKENS)
-        if current_output is None:
-            current_output = []
+        if self.args.model_type in ["blender", "blender-small"]:
+            print("Input >>>>>>> ", "\n".join(personality) + "\n" + "\n".join(history))
+            print("---------------------------------")
+            inputs = self.tokenizer(["\n".join(history).strip("\n")], return_tensors='pt')
+            # inputs = self.tokenizer(["\n".join(personality) + "\n" + "\n".join(history)], return_tensors='pt')
+            inputs["input_ids"] = inputs["input_ids"].to(self.device)
+            inputs["attention_mask"] = inputs["attention_mask"].to(self.device)
+            reply_ids = self.model.generate(**inputs)
+            reply = [tokenizer.decode(g, skip_special_tokens=True, clean_up_tokenization_spaces=True) for g in reply_ids]
+            return reply[0][10: -8] if self.args.model_type == "blender-small" else reply[0] # To remove the "__start__ " and " __end__"
+        else:
+            special_tokens_ids = tokenizer.convert_tokens_to_ids(SPECIAL_TOKENS)
+            if current_output is None:
+                current_output = []
 
-        for i in range(args.max_length):
-            instance = self.build_input_from_segments(personality, history, current_output, tokenizer, with_eos=False)
+            for i in range(args.max_length):
+                instance = self.build_input_from_segments(personality, history, current_output, tokenizer, with_eos=False)
 
-            input_ids = torch.tensor(instance["input_ids"], device=self.device).unsqueeze(0)
-            token_type_ids = torch.tensor(instance["token_type_ids"], device=self.device).unsqueeze(0)
+                input_ids = torch.tensor(instance["input_ids"], device=self.device).unsqueeze(0)
+                token_type_ids = torch.tensor(instance["token_type_ids"], device=self.device).unsqueeze(0)
 
-            logits = model(input_ids, token_type_ids=token_type_ids)
-            if isinstance(logits, tuple):  # for gpt2 and maybe others
-                logits = logits[0]
-            logits = logits[0, -1, :] / args.temperature
-            logits = self.top_filtering(logits, top_k=args.top_k, top_p=args.top_p)
-            probs = F.softmax(logits, dim=-1)
+                logits = model(input_ids, token_type_ids=token_type_ids)
+                if isinstance(logits, tuple):  # for gpt2 and maybe others
+                    logits = logits[0]
+                logits = logits[0, -1, :] / args.temperature
+                logits = self.top_filtering(logits, top_k=args.top_k, top_p=args.top_p)
+                probs = F.softmax(logits, dim=-1)
 
-            prev = torch.topk(probs, 1)[1] if not args.do_sample else torch.multinomial(probs, 1)
-            if i < args.min_length and prev.item() in special_tokens_ids:
-                while prev.item() in special_tokens_ids:
-                    if probs.max().item() == 1:
-                        warnings.warn("Warning: model generating special token with probability 1.")
-                        break  # avoid infinitely looping over special token
-                    prev = torch.multinomial(probs, num_samples=1)
+                prev = torch.topk(probs, 1)[1] if not args.do_sample else torch.multinomial(probs, 1)
+                if i < args.min_length and prev.item() in special_tokens_ids:
+                    while prev.item() in special_tokens_ids:
+                        if probs.max().item() == 1:
+                            warnings.warn("Warning: model generating special token with probability 1.")
+                            break  # avoid infinitely looping over special token
+                        prev = torch.multinomial(probs, num_samples=1)
 
-            if prev.item() in special_tokens_ids:
-                break
-            current_output.append(prev.item())
+                if prev.item() in special_tokens_ids:
+                    break
+                current_output.append(prev.item())
+
 
         return current_output
 

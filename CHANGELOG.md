@@ -4,6 +4,79 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.48.15] - 2020-10-22
+
+### Fixed
+
+- Updated some tokenizer arguments to the new argument names. [macabdul9](https://github.com/macabdul9)
+- Learning rate is now obtained from the `get_last_lr()` method. [sarapapi](https://github.com/sarapapi)
+
+## [0.48.14] - 2020-10-12
+
+### Fixed
+
+- Fixed `predict()` function issue when using `sliding_window`.
+- Fixed issues with simple-viewer (streamlit compatibility issues)
+
+## [0.48.13] - 2020-10-12
+
+### Fixed
+
+- Fixed issues with using mixed precision training with `LanguageModelingModel`.
+
+## [0.48.12] - 2020-10-12
+
+### Fixed
+
+- Fixed compatibility issues with W&B Sweeps. [jonatanklosko](https://github.com/jonatanklosko)
+
+## [0.48.11] - 2020-10-11
+
+### Changed
+
+-  The `train_model()` method now returns training details. Specifically;
+global_step: Number of global steps trained
+training_details: Average training loss if evaluate_during_training is False or full training progress scores if evaluate_during_training is True
+
+
+## [0.48.10] - 2020-10-11
+
+### Added
+
+-  Added support for special tokens with `Seq2SeqModel`. [Zhylkaaa](https://github.com/Zhylkaaa)
+
+## [0.48.9] - 2020-10-07
+
+### Changed
+
+-  Moved `model.train()` inside `train()` method.
+
+## [0.48.8] - 2020-10-07
+
+### Added
+
+-  Added support for `BERTweet` with `ClassificationModel`. [@manueltonneau](https://github.com/manueltonneau)
+
+## [0.48.7] - 2020-10-03
+
+### Added
+
+-  Added support for multilabel classification with the CamemBERT model. [@adrienrenaud](https://github.com/adrienrenaud)
+
+### Changed
+
+- Output arrays in classification evaluate/predict now avoids `np.append()`. This should be more time and memory efficient.
+
+## [0.48.6] - 2020-09-26
+
+### Added
+
+- Added `layoutlm` model for NER
+
+### Fixed
+
+- Potential fix for inconsistent `eval_loss` calculation
+
 ## [0.48.5] - 2020-09-17
 
 ### Added
@@ -14,16 +87,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Converted ONNX models can be loaded (requires specifying `onnx: True` in model_args) and used for prediction.
 - Added `fp16` support for evaluation and prediction (requires Pytorch >= 1.6) for the following models:
   - ClassificationModel
+  - ConvAI
+  - MultiModalClassificationModel
   - NERModel
   - QuestionAnsweringModel
   - Seq2Seq
   - T5Model
-  - ConvAI
-  - MultiModalClassificationModel
 - Added multigpu prediction/eval in
   - ClassificationModel
-  - MultiModalClassificationModel
   - ConvAI
+  - MultiModalClassificationModel
   - NERModel
   - QuestionAnsweringModel
   - Seq2Seq
@@ -1133,7 +1206,27 @@ Model checkpoint is now saved for all epochs again.
 
 - This CHANGELOG file to hopefully serve as an evolving example of a standardized open source project CHANGELOG.
 
-[0.48.5]: https://github.com/ThilinaRajapakse/simpletransformers/compare/39d25d0...HEAD
+[0.48.15]: https://github.com/ThilinaRajapakse/simpletransformers/compare/38d0cd8...HEAD
+
+[0.48.14]: https://github.com/ThilinaRajapakse/simpletransformers/compare/3ce9288...38d0cd8
+
+[0.48.13]: https://github.com/ThilinaRajapakse/simpletransformers/compare/6881e5c...3ce9288
+
+[0.48.12]: https://github.com/ThilinaRajapakse/simpletransformers/compare/b908bb5...6881e5c
+
+[0.48.11]: https://github.com/ThilinaRajapakse/simpletransformers/compare/1b59118...b908bb5
+
+[0.48.10]: https://github.com/ThilinaRajapakse/simpletransformers/compare/6370a1b...1b59118
+
+[0.48.9]: https://github.com/ThilinaRajapakse/simpletransformers/compare/1c231e1...6370a1b
+
+[0.48.8]: https://github.com/ThilinaRajapakse/simpletransformers/compare/edb9fdd...1c231e1
+
+[0.48.7]: https://github.com/ThilinaRajapakse/simpletransformers/compare/25fa010...edb9fdd
+
+[0.48.6]: https://github.com/ThilinaRajapakse/simpletransformers/compare/6f75f8e...25fa010
+
+[0.48.5]: https://github.com/ThilinaRajapakse/simpletransformers/compare/39d25d0...6f75f8e
 
 [0.48.4]: https://github.com/ThilinaRajapakse/simpletransformers/compare/7ef56b0...39d25d0
 

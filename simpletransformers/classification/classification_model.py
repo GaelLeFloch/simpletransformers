@@ -38,6 +38,7 @@ from transformers import (
     AlbertTokenizer,
     BertConfig,
     BertTokenizer,
+    BertweetTokenizer,
     CamembertConfig,
     CamembertTokenizer,
     DistilBertConfig,
@@ -80,6 +81,7 @@ from simpletransformers.classification.transformer_models.xlm_roberta_model impo
 from simpletransformers.classification.transformer_models.xlnet_model import XLNetForSequenceClassification
 from simpletransformers.config.global_args import global_args
 from simpletransformers.config.model_args import ClassificationArgs
+from simpletransformers.config.utils import sweep_config_to_sweep_values
 from simpletransformers.custom_models.models import ElectraForSequenceClassification
 
 try:
@@ -125,6 +127,7 @@ class ClassificationModel:
         MODEL_CLASSES = {
             "albert": (AlbertConfig, AlbertForSequenceClassification, AlbertTokenizer),
             "bert": (BertConfig, BertForSequenceClassification, BertTokenizer),
+            "bertweet": (RobertaConfig, RobertaForSequenceClassification, BertweetTokenizer),
             "camembert": (CamembertConfig, CamembertForSequenceClassification, CamembertTokenizer),
             "distilbert": (DistilBertConfig, DistilBertForSequenceClassification, DistilBertTokenizer),
             "electra": (ElectraConfig, ElectraForSequenceClassification, ElectraTokenizer),
@@ -149,7 +152,7 @@ class ClassificationModel:
 
         if "sweep_config" in kwargs:
             sweep_config = kwargs.pop("sweep_config")
-            sweep_values = {key: value["value"] for key, value in sweep_config.as_dict().items() if key != "_wandb"}
+            sweep_values = sweep_config_to_sweep_values(sweep_config)
             self.args.update_from_dict(sweep_values)
 
         if self.args.manual_seed:
@@ -250,7 +253,18 @@ class ClassificationModel:
             except AttributeError:
                 raise AttributeError("fp16 requires Pytorch >= 1.6. Please update Pytorch or turn off fp16.")
 
-        self.tokenizer = tokenizer_class.from_pretrained(model_name, do_lower_case=self.args.do_lower_case, **kwargs)
+        if model_name in [
+            "vinai/bertweet-base",
+            "vinai/bertweet-covid19-base-cased",
+            "vinai/bertweet-covid19-base-uncased",
+        ]:
+            self.tokenizer = tokenizer_class.from_pretrained(
+                model_name, do_lower_case=self.args.do_lower_case, normalization=True, **kwargs
+            )
+        else:
+            self.tokenizer = tokenizer_class.from_pretrained(
+                model_name, do_lower_case=self.args.do_lower_case, **kwargs
+            )
 
         self.args.model_name = model_name
         self.args.model_type = model_type
@@ -291,7 +305,8 @@ class ClassificationModel:
                         A metric function should take in two parameters. The first parameter will be the true labels, and the second parameter will be the predictions.
 
         Returns:
-            None
+            global_step: Number of global steps trained
+            training_details: Average training loss if evaluate_during_training is False or full training progress scores if evaluate_during_training is True
         """  # noqa: ignore flake8"
 
         if args:
@@ -354,7 +369,7 @@ class ClassificationModel:
 
         os.makedirs(output_dir, exist_ok=True)
 
-        global_step, tr_loss = self.train(
+        global_step, training_details = self.train(
             train_dataloader,
             output_dir,
             multi_label=multi_label,
@@ -372,6 +387,8 @@ class ClassificationModel:
 
         if verbose:
             logger.info(" Training of {} model complete. Saved to {}.".format(self.args.model_type, output_dir))
+
+        return global_step, training_details
 
     def train(
         self,
@@ -462,6 +479,7 @@ class ClassificationModel:
             model = torch.nn.DataParallel(model)
 
         global_step = 0
+        training_progress_scores = None
         tr_loss, logging_loss = 0.0, 0.0
         model.zero_grad()
         train_iterator = trange(int(args.num_train_epochs), desc="Epoch", disable=args.silent, mininterval=0)
@@ -505,8 +523,8 @@ class ClassificationModel:
 
             scaler = amp.GradScaler()
 
-        model.train()
         for _ in train_iterator:
+            model.train()
             if epochs_trained > 0:
                 epochs_trained -= 1
                 continue
@@ -569,7 +587,7 @@ class ClassificationModel:
 
                     if args.logging_steps > 0 and global_step % args.logging_steps == 0:
                         # Log metrics
-                        tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
+                        tb_writer.add_scalar("lr", scheduler.get_last_lr()[0], global_step)
                         tb_writer.add_scalar("loss", (tr_loss - logging_loss) / args.logging_steps, global_step)
                         logger.info(f"lr : {scheduler.get_lr()[0]}, loss : {(tr_loss - logging_loss) / args.logging_steps} at {global_step}")
                         logging_loss = tr_loss
@@ -577,7 +595,7 @@ class ClassificationModel:
                             wandb.log(
                                 {
                                     "Training loss": current_loss,
-                                    "lr": scheduler.get_lr()[0],
+                                    "lr": scheduler.get_last_lr()[0],
                                     "global_step": global_step,
                                 }
                             )
@@ -632,7 +650,12 @@ class ClassificationModel:
                                             logger.info(f" Patience of {args.early_stopping_patience} steps reached")
                                             logger.info(" Training terminated.")
                                             train_iterator.close()
-                                        return global_step, tr_loss / global_step
+                                        return (
+                                            global_step,
+                                            tr_loss / global_step
+                                            if not self.args.evaluate_during_training
+                                            else training_progress_scores,
+                                        )
                         else:
                             if results[args.early_stopping_metric] - best_eval_metric > args.early_stopping_delta:
                                 best_eval_metric = results[args.early_stopping_metric]
@@ -653,7 +676,12 @@ class ClassificationModel:
                                             logger.info(f" Patience of {args.early_stopping_patience} steps reached")
                                             logger.info(" Training terminated.")
                                             train_iterator.close()
-                                        return global_step, tr_loss / global_step
+                                        return (
+                                            global_step,
+                                            tr_loss / global_step
+                                            if not self.args.evaluate_during_training
+                                            else training_progress_scores,
+                                        )
 
             epoch_number += 1
             output_dir_current = os.path.join(output_dir, "checkpoint-{}-epoch-{}".format(global_step, epoch_number))
@@ -664,7 +692,7 @@ class ClassificationModel:
             if args.save_model_every_epoch:
                 self.save_model(output_dir_current, optimizer, scheduler, model=model)
 
-            if args.evaluate_during_training:
+            if args.evaluate_during_training and args.evaluate_each_epoch:
                 results, _, _ = self.eval_model(
                     eval_df,
                     verbose=verbose and args.evaluate_during_training_verbose,
@@ -701,7 +729,12 @@ class ClassificationModel:
                                     logger.info(f" Patience of {args.early_stopping_patience} steps reached")
                                     logger.info(" Training terminated.")
                                     train_iterator.close()
-                                return global_step, tr_loss / global_step
+                                return (
+                                    global_step,
+                                    tr_loss / global_step
+                                    if not self.args.evaluate_during_training
+                                    else training_progress_scores,
+                                )
                 else:
                     if results[args.early_stopping_metric] - best_eval_metric > args.early_stopping_delta:
                         best_eval_metric = results[args.early_stopping_metric]
@@ -720,9 +753,17 @@ class ClassificationModel:
                                     logger.info(f" Patience of {args.early_stopping_patience} steps reached")
                                     logger.info(" Training terminated.")
                                     train_iterator.close()
-                                return global_step, tr_loss / global_step
+                                return (
+                                    global_step,
+                                    tr_loss / global_step
+                                    if not self.args.evaluate_during_training
+                                    else training_progress_scores,
+                                )
 
-        return global_step, tr_loss / global_step
+        return (
+            global_step,
+            tr_loss / global_step if not self.args.evaluate_during_training else training_progress_scores,
+        )
 
     def eval_model(
         self, eval_df, multi_label=False, output_dir=None, verbose=True, silent=False, wandb_log=True, **kwargs
@@ -820,14 +861,18 @@ class ClassificationModel:
 
         eval_loss = 0.0
         nb_eval_steps = 0
-        preds = None
-        out_label_ids = None
+        n_batches = len(eval_dataloader)
+        preds = np.empty((len(eval_dataset), self.num_labels))
+        if multi_label:
+            out_label_ids = np.empty((len(eval_dataset), self.num_labels))
+        else:
+            out_label_ids = np.empty((len(eval_dataset)))
         model.eval()
 
         if self.args.fp16:
             from torch.cuda import amp
 
-        for batch in tqdm(eval_dataloader, disable=args.silent or silent, desc="Running Evaluation"):
+        for i, batch in enumerate(tqdm(eval_dataloader, disable=args.silent or silent, desc="Running Evaluation")):
             # batch = tuple(t.to(device) for t in batch)
 
             with torch.no_grad():
@@ -843,16 +888,23 @@ class ClassificationModel:
 
                 if multi_label:
                     logits = logits.sigmoid()
-                eval_loss += tmp_eval_loss.mean().item()
+                if self.args.n_gpu > 1:
+                    tmp_eval_loss = tmp_eval_loss.mean()
+                eval_loss += tmp_eval_loss.item()
 
             nb_eval_steps += 1
 
-            if preds is None:
-                preds = logits.detach().cpu().numpy()
-                out_label_ids = inputs["labels"].detach().cpu().numpy()
-            else:
-                preds = np.append(preds, logits.detach().cpu().numpy(), axis=0)
-                out_label_ids = np.append(out_label_ids, inputs["labels"].detach().cpu().numpy(), axis=0)
+            start_index = self.args.eval_batch_size * i
+            end_index = start_index + self.args.eval_batch_size if i != (n_batches - 1) else len(eval_dataset)
+            preds[start_index:end_index] = logits.detach().cpu().numpy()
+            out_label_ids[start_index:end_index] = inputs["labels"].detach().cpu().numpy()
+
+            # if preds is None:
+            #     preds = logits.detach().cpu().numpy()
+            #     out_label_ids = inputs["labels"].detach().cpu().numpy()
+            # else:
+            #     preds = np.append(preds, logits.detach().cpu().numpy(), axis=0)
+            #     out_label_ids = np.append(out_label_ids, inputs["labels"].detach().cpu().numpy(), axis=0)
 
         eval_loss = eval_loss / nb_eval_steps
 
@@ -1097,15 +1149,20 @@ class ClassificationModel:
 
         eval_loss = 0.0
         nb_eval_steps = 0
-        preds = None
-        out_label_ids = None
+        preds = np.empty((len(to_predict), self.num_labels))
+        if multi_label:
+            out_label_ids = np.empty((len(to_predict), self.num_labels))
+        else:
+            out_label_ids = np.empty((len(to_predict)))
 
         if not multi_label and self.args.onnx:
             model_inputs = self.tokenizer.batch_encode_plus(
                 to_predict, return_tensors="pt", padding=True, truncation=True
             )
 
-            for input_ids, attention_mask in zip(model_inputs["input_ids"], model_inputs["attention_mask"]):
+            for i, (input_ids, attention_mask) in enumerate(
+                zip(model_inputs["input_ids"], model_inputs["attention_mask"])
+            ):
                 input_ids = input_ids.unsqueeze(0).detach().cpu().numpy()
                 attention_mask = attention_mask.unsqueeze(0).detach().cpu().numpy()
                 inputs_onnx = {"input_ids": input_ids, "attention_mask": attention_mask}
@@ -1113,10 +1170,11 @@ class ClassificationModel:
                 # Run the model (None = get all the outputs)
                 output = self.model.run(None, inputs_onnx)
 
-                if preds is None:
-                    preds = output[0]
-                else:
-                    preds = np.append(preds, output[0], axis=0)
+                preds[i] = output[0]
+                # if preds is None:
+                #     preds = output[0]
+                # else:
+                #     preds = np.append(preds, output[0], axis=0)
 
             model_outputs = preds
             preds = np.argmax(preds, axis=1)
@@ -1148,6 +1206,11 @@ class ClassificationModel:
                     eval_examples = [InputExample(i, text, None, dummy_label) for i, text in enumerate(to_predict)]
             if args.sliding_window:
                 eval_dataset, window_counts = self.load_and_cache_examples(eval_examples, evaluate=True, no_cache=True)
+                preds = np.empty((len(eval_dataset), self.num_labels))
+                if multi_label:
+                    out_label_ids = np.empty((len(eval_dataset), self.num_labels))
+                else:
+                    out_label_ids = np.empty((len(eval_dataset)))
             else:
                 eval_dataset = self.load_and_cache_examples(
                     eval_examples, evaluate=True, multi_label=multi_label, no_cache=True
@@ -1160,10 +1223,11 @@ class ClassificationModel:
                 from torch.cuda import amp
 
             if self.config.output_hidden_states:
-                for batch in tqdm(eval_dataloader, disable=args.silent, desc="Running Prediction"):
-                    model.eval()
+                model.eval()
+                preds = None
+                out_label_ids = None
+                for i, batch in enumerate(tqdm(eval_dataloader, disable=args.silent, desc="Running Prediction")):
                     # batch = tuple(t.to(device) for t in batch)
-
                     with torch.no_grad():
                         inputs = self._get_inputs_dict(batch)
 
@@ -1179,7 +1243,9 @@ class ClassificationModel:
                         if multi_label:
                             logits = logits.sigmoid()
 
-                        eval_loss += tmp_eval_loss.mean().item()
+                        if self.args.n_gpu > 1:
+                            tmp_eval_loss = tmp_eval_loss.mean()
+                        eval_loss += tmp_eval_loss.item()
 
                     nb_eval_steps += 1
 
@@ -1191,8 +1257,8 @@ class ClassificationModel:
                         )
                         all_embedding_outputs = embedding_outputs.detach().cpu().numpy()
                     else:
-                        preds = np.append(preds, logits.detach().cpu().numpy(), axis=0)
-                        out_label_ids = np.append(out_label_ids, inputs["labels"].detach().cpu().numpy(), axis=0)
+                        # preds = np.append(preds, logits.detach().cpu().numpy(), axis=0)
+                        # out_label_ids = np.append(out_label_ids, inputs["labels"].detach().cpu().numpy(), axis=0)
                         all_layer_hidden_states = np.append(
                             all_layer_hidden_states,
                             np.array([state.detach().cpu().numpy() for state in layer_hidden_states]),
@@ -1202,7 +1268,8 @@ class ClassificationModel:
                             all_embedding_outputs, embedding_outputs.detach().cpu().numpy(), axis=0
                         )
             else:
-                for batch in tqdm(eval_dataloader, disable=args.silent):
+                n_batches = len(eval_dataloader)
+                for i, batch in enumerate(tqdm(eval_dataloader, disable=args.silent)):
                     model.eval()
                     # batch = tuple(t.to(device) for t in batch)
 
@@ -1220,16 +1287,23 @@ class ClassificationModel:
                         if multi_label:
                             logits = logits.sigmoid()
 
-                        eval_loss += tmp_eval_loss.mean().item()
+                        if self.args.n_gpu > 1:
+                            tmp_eval_loss = tmp_eval_loss.mean()
+                        eval_loss += tmp_eval_loss.item()
 
                     nb_eval_steps += 1
 
-                    if preds is None:
-                        preds = logits.detach().cpu().numpy()
-                        out_label_ids = inputs["labels"].detach().cpu().numpy()
-                    else:
-                        preds = np.append(preds, logits.detach().cpu().numpy(), axis=0)
-                        out_label_ids = np.append(out_label_ids, inputs["labels"].detach().cpu().numpy(), axis=0)
+                    start_index = self.args.eval_batch_size * i
+                    end_index = start_index + self.args.eval_batch_size if i != (n_batches - 1) else len(eval_dataset)
+                    preds[start_index:end_index] = logits.detach().cpu().numpy()
+                    out_label_ids[start_index:end_index] = inputs["labels"].detach().cpu().numpy()
+
+                    # if preds is None:
+                    #     preds = logits.detach().cpu().numpy()
+                    #     out_label_ids = inputs["labels"].detach().cpu().numpy()
+                    # else:
+                    #     preds = np.append(preds, logits.detach().cpu().numpy(), axis=0)
+                    #     out_label_ids = np.append(out_label_ids, inputs["labels"].detach().cpu().numpy(), axis=0)
 
             eval_loss = eval_loss / nb_eval_steps
 

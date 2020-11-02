@@ -451,6 +451,33 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "jonatanklosko",
+      "name": "Jonatan Kłosko",
+      "avatar_url": "https://avatars1.githubusercontent.com/u/17034772?v=4",
+      "profile": "https://jonatanklosko.com",
+      "contributions": [
+        "code"
+      ]
+    },
+    {
+      "login": "sarapapi",
+      "name": "sarapapi",
+      "avatar_url": "https://avatars0.githubusercontent.com/u/57095209?v=4",
+      "profile": "https://github.com/sarapapi",
+      "contributions": [
+        "code"
+      ]
+    },
+    {
+      "login": "macabdul9",
+      "name": "Abdul",
+      "avatar_url": "https://avatars0.githubusercontent.com/u/25720695?v=4",
+      "profile": "https://ab-cse.web.app",
+      "contributions": [
+        "code"
+      ]
     }
   ],
   "contributorsPerLine": 7,

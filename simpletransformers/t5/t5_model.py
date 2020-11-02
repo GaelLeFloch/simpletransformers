@@ -21,6 +21,7 @@ from transformers import AdamW, T5Config, T5ForConditionalGeneration, T5Tokenize
 
 from simpletransformers.config.global_args import global_args
 from simpletransformers.config.model_args import T5Args
+from simpletransformers.config.utils import sweep_config_to_sweep_values
 from simpletransformers.t5.t5_utils import T5Dataset
 
 try:
@@ -64,7 +65,7 @@ class T5Model:
 
         if "sweep_config" in kwargs:
             sweep_config = kwargs.pop("sweep_config")
-            sweep_values = {key: value["value"] for key, value in sweep_config.as_dict().items() if key != "_wandb"}
+            sweep_values = sweep_config_to_sweep_values(sweep_config)
             self.args.update_from_dict(sweep_values)
 
         if self.args.manual_seed:
@@ -129,7 +130,8 @@ class T5Model:
                         will be lists of strings. Note that this will slow down training significantly as the predicted sequences need to be generated.
 
         Returns:
-            None
+            global_step: Number of global steps trained
+            training_details: Average training loss if evaluate_during_training is False or full training progress scores if evaluate_during_training is True
         """  # noqa: ignore flake8"
 
         if args:
@@ -159,7 +161,7 @@ class T5Model:
 
         os.makedirs(output_dir, exist_ok=True)
 
-        global_step, tr_loss = self.train(
+        global_step, training_details = self.train(
             train_dataset,
             output_dir,
             show_running_loss=show_running_loss,
@@ -172,6 +174,8 @@ class T5Model:
 
         if verbose:
             logger.info(" Training of {} model complete. Saved to {}.".format(self.args.model_name, output_dir))
+
+        return global_step, training_details
 
     def train(
         self, train_dataset, output_dir, show_running_loss=True, eval_data=None, verbose=True, **kwargs,
@@ -278,6 +282,7 @@ class T5Model:
         logger.info(" Training started")
 
         global_step = 0
+        training_progress_scores = None
         tr_loss, logging_loss = 0.0, 0.0
         model.zero_grad()
         train_iterator = trange(int(args.num_train_epochs), desc="Epoch", disable=args.silent, mininterval=0)
@@ -320,8 +325,8 @@ class T5Model:
 
             scaler = amp.GradScaler()
 
-        model.train()
         for current_epoch in train_iterator:
+            model.train()
             if epochs_trained > 0:
                 epochs_trained -= 1
                 continue
@@ -384,14 +389,14 @@ class T5Model:
 
                     if args.logging_steps > 0 and global_step % args.logging_steps == 0:
                         # Log metrics
-                        tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
+                        tb_writer.add_scalar("lr", scheduler.get_last_lr()[0], global_step)
                         tb_writer.add_scalar("loss", (tr_loss - logging_loss) / args.logging_steps, global_step)
                         logging_loss = tr_loss
                         if args.wandb_project:
                             wandb.log(
                                 {
                                     "Training loss": current_loss,
-                                    "lr": scheduler.get_lr()[0],
+                                    "lr": scheduler.get_last_lr()[0],
                                     "global_step": global_step,
                                 }
                             )
@@ -456,7 +461,12 @@ class T5Model:
                                             logger.info(f" Patience of {args.early_stopping_patience} steps reached")
                                             logger.info(" Training terminated.")
                                             train_iterator.close()
-                                        return global_step, tr_loss / global_step
+                                        return (
+                                            global_step,
+                                            tr_loss / global_step
+                                            if not self.args.evaluate_during_training
+                                            else training_progress_scores,
+                                        )
                         else:
                             if results[args.early_stopping_metric] - best_eval_metric > args.early_stopping_delta:
                                 best_eval_metric = results[args.early_stopping_metric]
@@ -477,7 +487,12 @@ class T5Model:
                                             logger.info(f" Patience of {args.early_stopping_patience} steps reached")
                                             logger.info(" Training terminated.")
                                             train_iterator.close()
-                                        return global_step, tr_loss / global_step
+                                        return (
+                                            global_step,
+                                            tr_loss / global_step
+                                            if not self.args.evaluate_during_training
+                                            else training_progress_scores,
+                                        )
 
             epoch_number += 1
             output_dir_current = os.path.join(output_dir, "checkpoint-{}-epoch-{}".format(global_step, epoch_number))
@@ -488,7 +503,7 @@ class T5Model:
             if args.save_model_every_epoch:
                 self.save_model(output_dir_current, optimizer, scheduler, model=model)
 
-            if args.evaluate_during_training:
+            if args.evaluate_during_training and args.evaluate_each_epoch:
                 results = self.eval_model(
                     eval_data,
                     verbose=verbose and args.evaluate_during_training_verbose,
@@ -529,7 +544,12 @@ class T5Model:
                                     logger.info(f" Patience of {args.early_stopping_patience} steps reached")
                                     logger.info(" Training terminated.")
                                     train_iterator.close()
-                                return global_step, tr_loss / global_step
+                                return (
+                                    global_step,
+                                    tr_loss / global_step
+                                    if not self.args.evaluate_during_training
+                                    else training_progress_scores,
+                                )
                 else:
                     if results[args.early_stopping_metric] - best_eval_metric > args.early_stopping_delta:
                         best_eval_metric = results[args.early_stopping_metric]
@@ -548,9 +568,17 @@ class T5Model:
                                     logger.info(f" Patience of {args.early_stopping_patience} steps reached")
                                     logger.info(" Training terminated.")
                                     train_iterator.close()
-                                return global_step, tr_loss / global_step
+                                return (
+                                    global_step,
+                                    tr_loss / global_step
+                                    if not self.args.evaluate_during_training
+                                    else training_progress_scores,
+                                )
 
-        return global_step, tr_loss / global_step
+        return (
+            global_step,
+            tr_loss / global_step if not self.args.evaluate_during_training else training_progress_scores,
+        )
 
     def eval_model(self, eval_data, output_dir=None, verbose=True, silent=False, **kwargs):
         """
@@ -639,7 +667,9 @@ class T5Model:
                 else:
                     outputs = model(**inputs)
                     loss = outputs[0]
-                eval_loss += loss.mean().item()
+                if self.args.n_gpu > 1:
+                    loss = loss.mean()
+                eval_loss += loss.item()
             nb_eval_steps += 1
 
         eval_loss = eval_loss / nb_eval_steps
@@ -679,12 +709,13 @@ class T5Model:
                 input_ids = self.tokenizer.batch_encode_plus(
                     [t + " </s>" for t in batch],
                     max_length=self.args.max_seq_length,
-                    pad_to_max_length=True,
+                    padding="max_length",
+                    truncation=True,
                     return_tensors="pt",
                 )["input_ids"]
             else:
                 input_ids = self.tokenizer.batch_encode_plus(
-                    batch, max_length=self.args.max_seq_length, pad_to_max_length=True, return_tensors="pt",
+                    batch, max_length=self.args.max_seq_length, padding="max_length", truncation=True, return_tensors="pt",
                 )["input_ids"]
             input_ids = input_ids.to(self.device)
             outputs = self.model.generate(
@@ -715,7 +746,9 @@ class T5Model:
             self._move_model_to_device()
         else:
             outputs = [
-                self.tokenizer.decode(output_id, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+                self.tokenizer.decode(
+                    output_id, skip_special_tokens=self.args.skip_special_tokens, clean_up_tokenization_spaces=True
+                )
                 for output_id in all_outputs
             ]
 
@@ -728,7 +761,9 @@ class T5Model:
             return outputs
 
     def _decode(self, output_id):
-        return self.tokenizer.decode(output_id, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+        return self.tokenizer.decode(
+            output_id, skip_special_tokens=self.args.skip_special_tokens, clean_up_tokenization_spaces=True
+        )
 
     def compute_metrics(self, labels, preds, **kwargs):
         """

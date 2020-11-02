@@ -14,6 +14,7 @@ from transformers import (
     XLNetModel,
     XLNetPreTrainedModel,
 )
+from transformers.configuration_camembert import CamembertConfig
 from transformers.configuration_distilbert import DistilBertConfig
 from transformers.configuration_roberta import RobertaConfig
 from transformers.configuration_xlm_roberta import XLMRobertaConfig
@@ -25,6 +26,7 @@ from transformers.modeling_electra import (
     ElectraModel,
     ElectraPreTrainedModel,
 )
+from transformers.modeling_camembert import CAMEMBERT_PRETRAINED_MODEL_ARCHIVE_LIST
 from transformers.modeling_roberta import (
     ROBERTA_PRETRAINED_MODEL_ARCHIVE_LIST,
     RobertaClassificationHead,
@@ -121,6 +123,20 @@ class RobertaForMultiLabelSequenceClassification(BertPreTrainedModel):
             outputs = (loss,) + outputs
 
         return outputs
+
+
+class CamembertForMultiLabelSequenceClassification(RobertaForMultiLabelSequenceClassification):
+    """
+    Camembert model adapted for multi-label sequence classification.
+    Camembert shares the Roberta architecture, so we can reuse the simpletransformers
+    RobertaForMultiLabelSequenceClassification implementation, as it is done in
+    the transformers library
+    (https://github.com/huggingface/transformers/blob/master/src/transformers/modeling_camembert.py).
+    """
+
+    config_class = CamembertConfig
+    pretrained_model_archive_map = CAMEMBERT_PRETRAINED_MODEL_ARCHIVE_LIST
+    base_model_prefix = "camembert"
 
 
 class XLNetForMultiLabelSequenceClassification(XLNetPreTrainedModel):
@@ -438,13 +454,7 @@ class ElectraForLanguageModelingModel(PreTrainedModel):
             self.tie_generator_and_discriminator_embeddings()
 
     def tie_generator_and_discriminator_embeddings(self):
-        gen_embeddings = self.generator_model.electra.embeddings
-        disc_embeddings = self.discriminator_model.electra.embeddings
-
-        # tie word, position and token_type embeddings
-        gen_embeddings.word_embeddings.weight = disc_embeddings.word_embeddings.weight
-        gen_embeddings.position_embeddings.weight = disc_embeddings.position_embeddings.weight
-        gen_embeddings.token_type_embeddings.weight = disc_embeddings.token_type_embeddings.weight
+        self.discriminator_model.set_input_embeddings(self.generator_model.get_input_embeddings())
 
     def forward(self, inputs, masked_lm_labels, attention_mask=None, token_type_ids=None):
         d_inputs = inputs.clone()

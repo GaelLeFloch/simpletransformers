@@ -12,6 +12,8 @@ from transformers import (
     AlbertTokenizer,
     BertConfig,
     BertTokenizer,
+    CamembertConfig,
+    CamembertTokenizer,
     DistilBertConfig,
     DistilBertTokenizer,
     ElectraConfig,
@@ -31,9 +33,11 @@ from transformers import (
 from simpletransformers.classification import ClassificationModel
 from simpletransformers.config.global_args import global_args
 from simpletransformers.config.model_args import MultiLabelClassificationArgs
+from simpletransformers.config.utils import sweep_config_to_sweep_values
 from simpletransformers.custom_models.models import (
     AlbertForMultiLabelSequenceClassification,
     BertForMultiLabelSequenceClassification,
+    CamembertForMultiLabelSequenceClassification,
     DistilBertForMultiLabelSequenceClassification,
     ElectraForMultiLabelSequenceClassification,
     FlaubertForMultiLabelSequenceClassification,
@@ -81,15 +85,16 @@ class MultiLabelClassificationModel(ClassificationModel):
         """  # noqa: ignore flake8"
 
         MODEL_CLASSES = {
-            "bert": (BertConfig, BertForMultiLabelSequenceClassification, BertTokenizer,),
-            "roberta": (RobertaConfig, RobertaForMultiLabelSequenceClassification, RobertaTokenizer,),
-            "xlnet": (XLNetConfig, XLNetForMultiLabelSequenceClassification, XLNetTokenizer,),
-            "xlm": (XLMConfig, XLMForMultiLabelSequenceClassification, XLMTokenizer),
-            "distilbert": (DistilBertConfig, DistilBertForMultiLabelSequenceClassification, DistilBertTokenizer,),
             "albert": (AlbertConfig, AlbertForMultiLabelSequenceClassification, AlbertTokenizer,),
-            "flaubert": (FlaubertConfig, FlaubertForMultiLabelSequenceClassification, FlaubertTokenizer,),
-            "xlmroberta": (XLMRobertaConfig, XLMRobertaForMultiLabelSequenceClassification, XLMRobertaTokenizer,),
+            "bert": (BertConfig, BertForMultiLabelSequenceClassification, BertTokenizer,),
+            "camembert": (CamembertConfig, CamembertForMultiLabelSequenceClassification, CamembertTokenizer,),
+            "distilbert": (DistilBertConfig, DistilBertForMultiLabelSequenceClassification, DistilBertTokenizer,),
             "electra": (ElectraConfig, ElectraForMultiLabelSequenceClassification, ElectraTokenizer),
+            "flaubert": (FlaubertConfig, FlaubertForMultiLabelSequenceClassification, FlaubertTokenizer,),
+            "roberta": (RobertaConfig, RobertaForMultiLabelSequenceClassification, RobertaTokenizer,),
+            "xlm": (XLMConfig, XLMForMultiLabelSequenceClassification, XLMTokenizer),
+            "xlmroberta": (XLMRobertaConfig, XLMRobertaForMultiLabelSequenceClassification, XLMRobertaTokenizer,),
+            "xlnet": (XLNetConfig, XLNetForMultiLabelSequenceClassification, XLNetTokenizer,),
         }
 
         self.args = self._load_model_args(model_name)
@@ -104,7 +109,7 @@ class MultiLabelClassificationModel(ClassificationModel):
 
         if "sweep_config" in kwargs:
             sweep_config = kwargs.pop("sweep_config")
-            sweep_values = {key: value["value"] for key, value in sweep_config.as_dict().items() if key != "_wandb"}
+            sweep_values = sweep_config_to_sweep_values(sweep_config)
             self.args.update_from_dict(sweep_values)
 
         if self.args.manual_seed:

@@ -50,6 +50,9 @@ from transformers import (
     XLMRobertaConfig,
     XLMRobertaForTokenClassification,
     XLMRobertaTokenizer,
+    LayoutLMConfig,
+    LayoutLMForTokenClassification,
+    LayoutLMTokenizer,
     get_linear_schedule_with_warmup,
 )
 from wandb import config
@@ -57,6 +60,7 @@ from transformers.convert_graph_to_onnx import convert, quantize
 
 from simpletransformers.config.global_args import global_args
 from simpletransformers.config.model_args import NERArgs
+from simpletransformers.config.utils import sweep_config_to_sweep_values
 from simpletransformers.ner.ner_utils import (
     InputExample,
     LazyNERDataset,
@@ -110,6 +114,7 @@ class NERModel:
             "longformer": (LongformerConfig, LongformerForTokenClassification, LongformerTokenizer),
             "roberta": (RobertaConfig, RobertaForTokenClassification, RobertaTokenizer),
             "xlmroberta": (XLMRobertaConfig, XLMRobertaForTokenClassification, XLMRobertaTokenizer),
+            "layoutlm": (LayoutLMConfig, LayoutLMForTokenClassification, LayoutLMTokenizer),
         }
 
         self.args = self._load_model_args(model_name)
@@ -121,7 +126,7 @@ class NERModel:
 
         if "sweep_config" in kwargs:
             sweep_config = kwargs.pop("sweep_config")
-            sweep_values = {key: value["value"] for key, value in sweep_config.as_dict().items() if key != "_wandb"}
+            sweep_values = sweep_config_to_sweep_values(sweep_config)
             self.args.update_from_dict(sweep_values)
 
         if self.args.manual_seed:
@@ -251,7 +256,8 @@ class NERModel:
                         A metric function should take in two parameters. The first parameter will be the true labels, and the second parameter will be the predictions.
 
         Returns:
-            None
+            global_step: Number of global steps trained
+            training_details: Average training loss if evaluate_during_training is False or full training progress scores if evaluate_during_training is True
         """  # noqa: ignore flake8"
 
         if args:
@@ -288,13 +294,15 @@ class NERModel:
 
         os.makedirs(output_dir, exist_ok=True)
 
-        global_step, tr_loss = self.train(
+        global_step, training_details = self.train(
             train_dataset, output_dir, show_running_loss=show_running_loss, eval_data=eval_data, **kwargs
         )
 
         self.save_model(model=self.model)
 
         logger.info(" Training of {} model complete. Saved to {}.".format(self.args.model_type, output_dir))
+
+        return global_step, training_details
 
     def train(self, train_dataset, output_dir, show_running_loss=True, eval_data=None, verbose=True, **kwargs):
         """
@@ -384,6 +392,7 @@ class NERModel:
             model = torch.nn.DataParallel(model)
 
         global_step = 0
+        training_progress_scores = None
         tr_loss, logging_loss = 0.0, 0.0
         model.zero_grad()
         train_iterator = trange(int(args.num_train_epochs), desc="Epoch", disable=args.silent, mininterval=0)
@@ -425,8 +434,8 @@ class NERModel:
 
             scaler = amp.GradScaler()
 
-        model.train()
         for _ in train_iterator:
+            model.train()
             if epochs_trained > 0:
                 epochs_trained -= 1
                 continue
@@ -490,7 +499,7 @@ class NERModel:
 
                     if args.logging_steps > 0 and global_step % args.logging_steps == 0:
                         # Log metrics
-                        tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
+                        tb_writer.add_scalar("lr", scheduler.get_last_lr()[0], global_step)
                         tb_writer.add_scalar(
                             "loss", (tr_loss - logging_loss) / args.logging_steps, global_step,
                         )
@@ -499,7 +508,7 @@ class NERModel:
                             wandb.log(
                                 {
                                     "Training loss": current_loss,
-                                    "lr": scheduler.get_lr()[0],
+                                    "lr": scheduler.get_last_lr()[0],
                                     "global_step": global_step,
                                 }
                             )
@@ -568,7 +577,12 @@ class NERModel:
                                             logger.info(f" Patience of {args.early_stopping_patience} steps reached")
                                             logger.info(" Training terminated.")
                                             train_iterator.close()
-                                        return global_step, tr_loss / global_step
+                                        return (
+                                            global_step,
+                                            tr_loss / global_step
+                                            if not self.args.evaluate_during_training
+                                            else training_progress_scores,
+                                        )
                         else:
                             if results[args.early_stopping_metric] - best_eval_metric > args.early_stopping_delta:
                                 best_eval_metric = results[args.early_stopping_metric]
@@ -589,7 +603,12 @@ class NERModel:
                                             logger.info(f" Patience of {args.early_stopping_patience} steps reached")
                                             logger.info(" Training terminated.")
                                             train_iterator.close()
-                                        return global_step, tr_loss / global_step
+                                        return (
+                                            global_step,
+                                            tr_loss / global_step
+                                            if not self.args.evaluate_during_training
+                                            else training_progress_scores,
+                                        )
 
             epoch_number += 1
             output_dir_current = os.path.join(output_dir, "checkpoint-{}-epoch-{}".format(global_step, epoch_number))
@@ -600,7 +619,7 @@ class NERModel:
             if args.save_model_every_epoch:
                 self.save_model(output_dir_current, optimizer, scheduler, model=model)
 
-            if args.evaluate_during_training:
+            if args.evaluate_during_training and args.evaluate_each_epoch:
                 results, _, _ = self.eval_model(
                     eval_data, verbose=verbose and args.evaluate_during_training_verbose, wandb_log=False, **kwargs
                 )
@@ -638,7 +657,12 @@ class NERModel:
                                     logger.info(f" Patience of {args.early_stopping_patience} steps reached")
                                     logger.info(" Training terminated.")
                                     train_iterator.close()
-                                return global_step, tr_loss / global_step
+                                return (
+                                    global_step,
+                                    tr_loss / global_step
+                                    if not self.args.evaluate_during_training
+                                    else training_progress_scores,
+                                )
                 else:
                     if results[args.early_stopping_metric] - best_eval_metric > args.early_stopping_delta:
                         best_eval_metric = results[args.early_stopping_metric]
@@ -658,9 +682,17 @@ class NERModel:
                                     logger.info(f" Patience of {args.early_stopping_patience} steps reached")
                                     logger.info(" Training terminated.")
                                     train_iterator.close()
-                                return global_step, tr_loss / global_step
+                                return (
+                                    global_step,
+                                    tr_loss / global_step
+                                    if not self.args.evaluate_during_training
+                                    else training_progress_scores,
+                                )
 
-        return global_step, tr_loss / global_step
+        return (
+            global_step,
+            tr_loss / global_step if not self.args.evaluate_during_training else training_progress_scores,
+        )
 
     def eval_model(self, eval_data, output_dir=None, verbose=True, silent=False, wandb_log=True, **kwargs):
         """
@@ -735,14 +767,7 @@ class NERModel:
             batch = tuple(t.to(device) for t in batch)
 
             with torch.no_grad():
-                inputs = {
-                    "input_ids": batch[0],
-                    "attention_mask": batch[1],
-                    "labels": batch[3],
-                }
-                # XLM and RoBERTa don"t use segment_ids
-                if args.model_type in ["bert", "xlnet"]:
-                    inputs["token_type_ids"] = batch[2]
+                inputs = self._get_inputs_dict(batch)
 
                 if self.args.fp16:
                     with amp.autocast():
@@ -752,7 +777,9 @@ class NERModel:
                     outputs = model(**inputs)
                     tmp_eval_loss, logits = outputs[:2]
 
-                eval_loss += tmp_eval_loss.mean().item()
+                if self.args.n_gpu > 1:
+                    tmp_eval_loss = tmp_eval_loss.mean()
+                eval_loss += tmp_eval_loss.item()
 
             nb_eval_steps += 1
 
@@ -796,9 +823,6 @@ class NERModel:
         extra_metrics = {}
         for metric, func in kwargs.items():
             extra_metrics[metric] = func(out_label_list, preds_list)
-
-        print(out_label_list)
-        print(preds_list)
 
         result = {
             "eval_loss": eval_loss,
@@ -864,15 +888,31 @@ class NERModel:
         preds = None
 
         if split_on_space:
-            predict_examples = [
-                InputExample(i, sentence.split(), [self.args.labels_list[0] for word in sentence.split()])
-                for i, sentence in enumerate(to_predict)
-            ]
+            if self.args.model_type == "layoutlm":
+                predict_examples = [
+                    InputExample(
+                        i, sentence.split(), [self.args.labels_list[0] for word in sentence.split()], x0, y0, x1, y1
+                    )
+                    for i, (sentence, x0, y0, x1, y1) in enumerate(to_predict)
+                ]
+                to_predict = [sentence for sentence, *_ in to_predict]
+            else:
+                predict_examples = [
+                    InputExample(i, sentence.split(), [self.args.labels_list[0] for word in sentence.split()])
+                    for i, sentence in enumerate(to_predict)
+                ]
         else:
-            predict_examples = [
-                InputExample(i, sentence, [self.args.labels_list[0] for word in sentence])
-                for i, sentence in enumerate(to_predict)
-            ]
+            if self.args.model_type == "layoutlm":
+                predict_examples = [
+                    InputExample(i, sentence, [self.args.labels_list[0] for word in sentence], x0, y0, x1, y1)
+                    for i, (sentence, x0, y0, x1, y1) in enumerate(to_predict)
+                ]
+                to_predict = [sentence for sentence, *_ in to_predict]
+            else:
+                predict_examples = [
+                    InputExample(i, sentence, [self.args.labels_list[0] for word in sentence])
+                    for i, sentence in enumerate(to_predict)
+                ]
 
         eval_dataset = self.load_and_cache_examples(None, to_predict=predict_examples)
 
@@ -920,14 +960,7 @@ class NERModel:
                 batch = tuple(t.to(device) for t in batch)
 
                 with torch.no_grad():
-                    inputs = {
-                        "input_ids": batch[0],
-                        "attention_mask": batch[1],
-                        "labels": batch[3],
-                    }
-                    # XLM and RoBERTa don"t use segment_ids
-                    if args.model_type in ["bert", "xlnet"]:
-                        inputs["token_type_ids"] = batch[2]
+                    inputs = self._get_inputs_dict(batch)
 
                     if self.args.fp16:
                         with amp.autocast():
@@ -937,7 +970,9 @@ class NERModel:
                         outputs = model(**inputs)
                         tmp_eval_loss, logits = outputs[:2]
 
-                    eval_loss += tmp_eval_loss.mean().item()
+                    if self.args.n_gpu > 1:
+                        tmp_eval_loss = tmp_eval_loss.mean()
+                    eval_loss += tmp_eval_loss.item()
 
                 nb_eval_steps += 1
 
@@ -1058,11 +1093,13 @@ class NERModel:
         else:
             if not to_predict:
                 if isinstance(data, str):
-                    examples = read_examples_from_file(data, mode)
+                    examples = read_examples_from_file(
+                        data, mode, bbox=True if self.args.model_type == "layoutlm" else False
+                    )
                 else:
                     if self.args.lazy_loading:
                         raise ValueError("Input must be given as a path to a file when using lazy loading")
-                    examples = get_examples_from_df(data)
+                    examples = get_examples_from_df(data, bbox=True if self.args.model_type == "layoutlm" else False)
             else:
                 examples = to_predict
                 no_cache = True
@@ -1116,10 +1153,16 @@ class NERModel:
             all_segment_ids = torch.tensor([f.segment_ids for f in features], dtype=torch.long)
             all_label_ids = torch.tensor([f.label_ids for f in features], dtype=torch.long)
 
+            if self.args.model_type == "layoutlm":
+                all_bboxes = torch.tensor([f.bboxes for f in features], dtype=torch.long)
+
             if self.args.onnx:
                 return all_label_ids
 
-            dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids)
+            if self.args.model_type == "layoutlm":
+                dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids, all_bboxes)
+            else:
+                dataset = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_label_ids)
 
         return dataset
 
@@ -1172,8 +1215,11 @@ class NERModel:
             "labels": batch[3],
         }
         # XLM, DistilBERT, RoBERTa, and XLM-RoBERTa don't use segment_ids
-        if self.args.model_type in ["bert", "xlnet", "albert"]:
+        if self.args.model_type in ["bert", "xlnet", "albert", "layoutlm"]:
             inputs["token_type_ids"] = batch[2]
+
+        if self.args.model_type == "layoutlm":
+            inputs["bbox"] = batch[4]
 
         return inputs
 

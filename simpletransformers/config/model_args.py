@@ -41,6 +41,7 @@ class ModelArgs:
     evaluate_during_training_silent: bool = True
     evaluate_during_training_steps: int = 2000
     evaluate_during_training_verbose: bool = False
+    evaluate_each_epoch: bool = True
     fp16: bool = True
     gradient_accumulation_steps: int = 1
     learning_rate: float = 4e-5
@@ -79,6 +80,7 @@ class ModelArgs:
     warmup_ratio: float = 0.06
     warmup_steps: int = 0
     weight_decay: int = 0
+    skip_special_tokens: bool = True
 
     def update_from_dict(self, new_values):
         if isinstance(new_values, dict):

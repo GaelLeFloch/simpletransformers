@@ -58,6 +58,7 @@ from transformers import (
 
 from simpletransformers.config.global_args import global_args
 from simpletransformers.config.model_args import Seq2SeqArgs
+from simpletransformers.config.utils import sweep_config_to_sweep_values
 from simpletransformers.seq2seq.seq2seq_utils import Seq2SeqDataset, SimpleSummarizationDataset
 
 try:
@@ -91,6 +92,8 @@ class Seq2SeqModel:
         decoder_name=None,
         encoder_decoder_type=None,
         encoder_decoder_name=None,
+        additional_special_tokens_encoder=None,
+        additional_special_tokens_decoder=None,
         config=None,
         args=None,
         use_cuda=True,
@@ -108,6 +111,8 @@ class Seq2SeqModel:
                                     Must be the same "size" as the encoder model (base/base, large/large, etc.)
             encoder_decoder_type (optional): The type of encoder-decoder model. (E.g. bart)
             encoder_decoder_name (optional): The path to a directory containing the saved encoder and decoder of a Seq2SeqModel. (E.g. "outputs/") OR a valid BART or MarianMT model.
+            additional_special_tokens_encoder (optional): dict of special tokens to add to encoder tokenizer
+            additional_special_tokens_decoder (optional): dict of special tokens to add to decoder tokenizer
             config (optional): A configuration file to build an EncoderDecoderModel.
             args (optional): Default args will be used if this parameter is not provided. If provided, it should be a dict containing the args that should be changed in the default args.
             use_cuda (optional): Use GPU if available. Setting to False will force model to use CPU only.
@@ -139,7 +144,7 @@ class Seq2SeqModel:
 
         if "sweep_config" in kwargs:
             sweep_config = kwargs.pop("sweep_config")
-            sweep_values = {key: value["value"] for key, value in sweep_config.as_dict().items() if key != "_wandb"}
+            sweep_values = sweep_config_to_sweep_values(sweep_config)
             self.args.update_from_dict(sweep_values)
 
         if self.args.manual_seed:
@@ -191,18 +196,22 @@ class Seq2SeqModel:
                 self.model = EncoderDecoderModel.from_encoder_decoder_pretrained(
                     os.path.join(encoder_decoder_name, "encoder"), os.path.join(encoder_decoder_name, "decoder")
                 )
-                self.model.encoder = model_class.from_pretrained(os.path.join(encoder_decoder_name, "encoder"))
-                self.model.decoder = BertForMaskedLM.from_pretrained(os.path.join(encoder_decoder_name, "decoder"))
                 self.encoder_tokenizer = tokenizer_class.from_pretrained(os.path.join(encoder_decoder_name, "encoder"))
-                self.decoder_tokenizer = BertTokenizer.from_pretrained(os.path.join(encoder_decoder_name, "decoder"))
+                self.decoder_tokenizer = AutoTokenizer.from_pretrained(os.path.join(encoder_decoder_name, "decoder"))
             else:
                 self.model = EncoderDecoderModel.from_encoder_decoder_pretrained(
                     encoder_name, decoder_name, config=config
                 )
                 self.encoder_tokenizer = tokenizer_class.from_pretrained(encoder_name)
-                self.decoder_tokenizer = BertTokenizer.from_pretrained(decoder_name)
+                self.decoder_tokenizer = AutoTokenizer.from_pretrained(decoder_name)
             self.encoder_config = self.model.config.encoder
             self.decoder_config = self.model.config.decoder
+
+        if additional_special_tokens_encoder is not None:
+            self.encoder_tokenizer.add_special_tokens(additional_special_tokens_encoder)
+
+        if additional_special_tokens_decoder is not None:
+            self.decoder_tokenizer.add_special_tokens(additional_special_tokens_decoder)
 
         if self.args.wandb_project and not wandb_available:
             warnings.warn("wandb_project specified but wandb is not available. Wandb disabled.")
@@ -249,7 +258,8 @@ class Seq2SeqModel:
                         will be lists of strings. Note that this will slow down training significantly as the predicted sequences need to be generated.
 
         Returns:
-            None
+            global_step: Number of global steps trained
+            training_details: Average training loss if evaluate_during_training is False or full training progress scores if evaluate_during_training is True
         """  # noqa: ignore flake8"
 
         if args:
@@ -279,7 +289,7 @@ class Seq2SeqModel:
 
         os.makedirs(output_dir, exist_ok=True)
 
-        global_step, tr_loss = self.train(
+        global_step, training_details = self.train(
             train_dataset,
             output_dir,
             show_running_loss=show_running_loss,
@@ -298,6 +308,8 @@ class Seq2SeqModel:
 
         if verbose:
             logger.info(" Training of {} model complete. Saved to {}.".format(self.args.model_name, output_dir))
+
+        return global_step, training_details
 
     def train(
         self, train_dataset, output_dir, show_running_loss=True, eval_data=None, verbose=True, **kwargs,
@@ -404,6 +416,7 @@ class Seq2SeqModel:
         logger.info(" Training started")
 
         global_step = 0
+        training_progress_scores = None
         tr_loss, logging_loss = 0.0, 0.0
         model.zero_grad()
         train_iterator = trange(int(args.num_train_epochs), desc="Epoch", disable=args.silent, mininterval=0)
@@ -446,8 +459,8 @@ class Seq2SeqModel:
 
             scaler = amp.GradScaler()
 
-        model.train()
         for current_epoch in train_iterator:
+            model.train()
             if epochs_trained > 0:
                 epochs_trained -= 1
                 continue
@@ -510,14 +523,14 @@ class Seq2SeqModel:
 
                     if args.logging_steps > 0 and global_step % args.logging_steps == 0:
                         # Log metrics
-                        tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
+                        tb_writer.add_scalar("lr", scheduler.get_last_lr()[0], global_step)
                         tb_writer.add_scalar("loss", (tr_loss - logging_loss) / args.logging_steps, global_step)
                         logging_loss = tr_loss
                         if args.wandb_project:
                             wandb.log(
                                 {
                                     "Training loss": current_loss,
-                                    "lr": scheduler.get_lr()[0],
+                                    "lr": scheduler.get_last_lr()[0],
                                     "global_step": global_step,
                                 }
                             )
@@ -586,7 +599,12 @@ class Seq2SeqModel:
                                             logger.info(f" Patience of {args.early_stopping_patience} steps reached")
                                             logger.info(" Training terminated.")
                                             train_iterator.close()
-                                        return global_step, tr_loss / global_step
+                                        return (
+                                            global_step,
+                                            tr_loss / global_step
+                                            if not self.args.evaluate_during_training
+                                            else training_progress_scores,
+                                        )
                         else:
                             if results[args.early_stopping_metric] - best_eval_metric > args.early_stopping_delta:
                                 best_eval_metric = results[args.early_stopping_metric]
@@ -608,7 +626,12 @@ class Seq2SeqModel:
                                             logger.info(f" Patience of {args.early_stopping_patience} steps reached")
                                             logger.info(" Training terminated.")
                                             train_iterator.close()
-                                        return global_step, tr_loss / global_step
+                                        return (
+                                            global_step,
+                                            tr_loss / global_step
+                                            if not self.args.evaluate_during_training
+                                            else training_progress_scores,
+                                        )
 
             epoch_number += 1
             output_dir_current = os.path.join(output_dir, "checkpoint-{}-epoch-{}".format(global_step, epoch_number))
@@ -619,7 +642,7 @@ class Seq2SeqModel:
             if args.save_model_every_epoch:
                 self.save_model(output_dir_current, optimizer, scheduler, model=model)
 
-            if args.evaluate_during_training:
+            if args.evaluate_during_training and args.evaluate_each_epoch:
                 results = self.eval_model(
                     eval_data,
                     verbose=verbose and args.evaluate_during_training_verbose,
@@ -663,7 +686,12 @@ class Seq2SeqModel:
                                     logger.info(f" Patience of {args.early_stopping_patience} steps reached")
                                     logger.info(" Training terminated.")
                                     train_iterator.close()
-                                return global_step, tr_loss / global_step
+                                return (
+                                    global_step,
+                                    tr_loss / global_step
+                                    if not self.args.evaluate_during_training
+                                    else training_progress_scores,
+                                )
                 else:
                     if results[args.early_stopping_metric] - best_eval_metric > args.early_stopping_delta:
                         best_eval_metric = results[args.early_stopping_metric]
@@ -683,9 +711,17 @@ class Seq2SeqModel:
                                     logger.info(f" Patience of {args.early_stopping_patience} steps reached")
                                     logger.info(" Training terminated.")
                                     train_iterator.close()
-                                return global_step, tr_loss / global_step
+                                return (
+                                    global_step,
+                                    tr_loss / global_step
+                                    if not self.args.evaluate_during_training
+                                    else training_progress_scores,
+                                )
 
-        return global_step, tr_loss / global_step
+        return (
+            global_step,
+            tr_loss / global_step if not self.args.evaluate_during_training else training_progress_scores,
+        )
 
     def eval_model(self, eval_data, output_dir=None, verbose=True, silent=False, **kwargs):
         """
@@ -765,11 +801,13 @@ class Seq2SeqModel:
                 if self.args.fp16:
                     with amp.autocast():
                         outputs = model(**inputs)
-                        loss = outputs[0]
+                        tmp_eval_loss = outputs[0]
                 else:
                     outputs = model(**inputs)
-                    loss = outputs[0]
-                eval_loss += loss.mean().item()
+                    tmp_eval_loss = outputs[0]
+                if self.args.n_gpu > 1:
+                    tmp_eval_loss = tmp_eval_loss.mean()
+                eval_loss += tmp_eval_loss.item()
             nb_eval_steps += 1
 
         eval_loss = eval_loss / nb_eval_steps
@@ -805,7 +843,7 @@ class Seq2SeqModel:
                 input_ids = self.encoder_tokenizer.prepare_translation_batch(
                     batch,
                     max_length=self.args.max_seq_length,
-                    pad_to_max_length=True,
+                    padding="max_length",
                     return_tensors="pt",
                     truncation=True,
                 )["input_ids"]
@@ -813,7 +851,7 @@ class Seq2SeqModel:
                 input_ids = self.encoder_tokenizer.batch_encode_plus(
                     batch,
                     max_length=self.args.max_seq_length,
-                    pad_to_max_length=True,
+                    padding="max_length",
                     return_tensors="pt",
                     truncation=True,
                 )["input_ids"]
@@ -863,7 +901,9 @@ class Seq2SeqModel:
             self._move_model_to_device()
         else:
             outputs = [
-                self.decoder_tokenizer.decode(output_id, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+                self.decoder_tokenizer.decode(
+                    output_id, skip_special_tokens=self.args.skip_special_tokens, clean_up_tokenization_spaces=True
+                )
                 for output_id in all_outputs
             ]
 
@@ -876,7 +916,9 @@ class Seq2SeqModel:
             return outputs
 
     def _decode(self, output_id):
-        return self.decoder_tokenizer.decode(output_id, skip_special_tokens=True, clean_up_tokenization_spaces=True)
+        return self.decoder_tokenizer.decode(
+            output_id, skip_special_tokens=self.args.skip_special_tokens, clean_up_tokenization_spaces=True
+        )
 
     def compute_metrics(self, labels, preds, **kwargs):
         """

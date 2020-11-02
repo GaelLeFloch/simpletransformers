@@ -69,6 +69,7 @@ from transformers.data.datasets.language_modeling import LineByLineTextDataset, 
 
 from simpletransformers.config.global_args import global_args
 from simpletransformers.config.model_args import LanguageModelingArgs
+from simpletransformers.config.utils import sweep_config_to_sweep_values
 from simpletransformers.custom_models.models import ElectraForLanguageModelingModel
 from simpletransformers.language_modeling.language_modeling_utils import SimpleDataset, mask_tokens
 
@@ -132,7 +133,7 @@ class LanguageModelingModel:
 
         if "sweep_config" in kwargs:
             sweep_config = kwargs.pop("sweep_config")
-            sweep_values = {key: value["value"] for key, value in sweep_config.as_dict().items() if key != "_wandb"}
+            sweep_values = sweep_config_to_sweep_values(sweep_config)
             self.args.update_from_dict(sweep_values)
 
         if self.args.manual_seed:
@@ -331,7 +332,8 @@ class LanguageModelingModel:
             eval_file (optional): Path to eval file containing the text to evaluate the language model on.
 
         Returns:
-            None
+            global_step: Number of global steps trained
+            training_details: Average training loss if evaluate_during_training is False or full training progress scores if evaluate_during_training is True
         """  # noqa: ignore flake8"
 
         if args:
@@ -361,7 +363,7 @@ class LanguageModelingModel:
 
         os.makedirs(output_dir, exist_ok=True)
 
-        global_step, tr_loss = self.train(
+        global_step, training_details = self.train(
             train_dataset,
             output_dir,
             show_running_loss=show_running_loss,
@@ -381,6 +383,8 @@ class LanguageModelingModel:
 
         if verbose:
             logger.info(" Training of {} model complete. Saved to {}.".format(self.args.model_type, output_dir))
+
+        return global_step, training_details
 
     def train(
         self, train_dataset, output_dir, show_running_loss=True, eval_file=None, verbose=True, **kwargs,
@@ -496,6 +500,7 @@ class LanguageModelingModel:
         logger.info(" Training started")
 
         global_step = 0
+        training_progress_scores = None
         tr_loss, logging_loss = 0.0, 0.0
         model.zero_grad()
         train_iterator = trange(int(args.num_train_epochs), desc="Epoch", disable=args.silent, mininterval=0)
@@ -538,8 +543,8 @@ class LanguageModelingModel:
 
             scaler = amp.GradScaler()
 
-        model.train()
         for current_epoch in train_iterator:
+            model.train()
             if isinstance(train_dataloader, DataLoader) and isinstance(train_dataloader.sampler, DistributedSampler):
                 train_dataloader.sampler.set_epoch(current_epoch)
             if epochs_trained > 0:
@@ -563,9 +568,17 @@ class LanguageModelingModel:
 
                 if args.fp16:
                     with amp.autocast():
-                        outputs = model(**inputs)
+                        if args.model_type == "longformer":
+                            outputs = model(inputs, attention_mask=None, masked_lm_labels=labels)
+                        else:
+                            outputs = model(inputs, masked_lm_labels=labels) if args.mlm else model(inputs, labels=labels)
                         # model outputs are always tuple in pytorch-transformers (see doc)
-                        loss = outputs[0]
+                        if args.model_type == "electra":
+                            g_loss = outputs[0]
+                            d_loss = outputs[1]
+                            loss = g_loss + args.discriminator_loss_weight * d_loss
+                        else:
+                            loss = outputs[0]
                 else:
                     if args.model_type == "longformer":
                         outputs = model(inputs, attention_mask=None, masked_lm_labels=labels)
@@ -620,14 +633,14 @@ class LanguageModelingModel:
                     if args.logging_steps > 0 and global_step % args.logging_steps == 0:
                         # Log metrics
                         if self.is_world_master():
-                            tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
+                            tb_writer.add_scalar("lr", scheduler.get_last_lr()[0], global_step)
                             tb_writer.add_scalar("loss", (tr_loss - logging_loss) / args.logging_steps, global_step)
                         logging_loss = tr_loss
                         if args.wandb_project:
                             wandb.log(
                                 {
                                     "Training loss": current_loss,
-                                    "lr": scheduler.get_lr()[0],
+                                    "lr": scheduler.get_last_lr()[0],
                                     "global_step": global_step,
                                 }
                             )
@@ -694,7 +707,12 @@ class LanguageModelingModel:
                                             logger.info(f" Patience of {args.early_stopping_patience} steps reached.")
                                             logger.info(" Training terminated.")
                                             train_iterator.close()
-                                        return global_step, tr_loss / global_step
+                                        return (
+                                            global_step,
+                                            tr_loss / global_step
+                                            if not self.args.evaluate_during_training
+                                            else training_progress_scores,
+                                        )
                         else:
                             if results[args.early_stopping_metric] - best_eval_metric > args.early_stopping_delta:
                                 best_eval_metric = results[args.early_stopping_metric]
@@ -715,10 +733,18 @@ class LanguageModelingModel:
                                             logger.info(f" Patience of {args.early_stopping_patience} steps reached.")
                                             logger.info(" Training terminated.")
                                             train_iterator.close()
-                                        return global_step, tr_loss / global_step
+                                        return (
+                                            global_step,
+                                            tr_loss / global_step
+                                            if not self.args.evaluate_during_training
+                                            else training_progress_scores,
+                                        )
 
                 if args.max_steps > 0 and global_step > args.max_steps:
-                    return global_step, tr_loss / global_step
+                    return (
+                        global_step,
+                        tr_loss / global_step if not self.args.evaluate_during_training else training_progress_scores,
+                    )
 
             epoch_number += 1
             output_dir_current = os.path.join(output_dir, "checkpoint-{}-epoch-{}".format(global_step, epoch_number))
@@ -729,7 +755,7 @@ class LanguageModelingModel:
             if args.save_model_every_epoch:
                 self.save_model(output_dir_current, optimizer, scheduler, model=model)
 
-            if args.evaluate_during_training:
+            if args.evaluate_during_training and args.evaluate_each_epoch:
                 results = self.eval_model(
                     eval_file,
                     verbose=verbose and args.evaluate_during_training_verbose,
@@ -770,7 +796,12 @@ class LanguageModelingModel:
                                     logger.info(f" Patience of {args.early_stopping_patience} steps reached")
                                     logger.info(" Training terminated.")
                                     train_iterator.close()
-                                return global_step, tr_loss / global_step
+                                return (
+                                    global_step,
+                                    tr_loss / global_step
+                                    if not self.args.evaluate_during_training
+                                    else training_progress_scores,
+                                )
                 else:
                     if results[args.early_stopping_metric] - best_eval_metric > args.early_stopping_delta:
                         best_eval_metric = results[args.early_stopping_metric]
@@ -789,12 +820,23 @@ class LanguageModelingModel:
                                     logger.info(f" Patience of {args.early_stopping_patience} steps reached")
                                     logger.info(" Training terminated.")
                                     train_iterator.close()
-                                return global_step, tr_loss / global_step
+                                return (
+                                    global_step,
+                                    tr_loss / global_step
+                                    if not self.args.evaluate_during_training
+                                    else training_progress_scores,
+                                )
 
             if args.max_steps > 0 and global_step > args.max_steps:
-                return global_step, tr_loss / global_step
+                return (
+                    global_step,
+                    tr_loss / global_step if not self.args.evaluate_during_training else training_progress_scores,
+                )
 
-        return global_step, tr_loss / global_step
+        return (
+            global_step,
+            tr_loss / global_step if not self.args.evaluate_during_training else training_progress_scores,
+        )
 
     def eval_model(self, eval_file, output_dir=None, verbose=True, silent=False, **kwargs):
         """
@@ -861,7 +903,9 @@ class LanguageModelingModel:
                     lm_loss = g_loss + args.discriminator_loss_weight * d_loss
                 else:
                     lm_loss = outputs[0]
-                eval_loss += lm_loss.mean().item()
+                if self.args.n_gpu > 1:
+                    lm_loss = lm_loss.mean()
+                eval_loss += lm_loss.item()
             nb_eval_steps += 1
 
         eval_loss = eval_loss / nb_eval_steps

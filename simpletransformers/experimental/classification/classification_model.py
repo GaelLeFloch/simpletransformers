@@ -230,7 +230,7 @@ class ClassificationModel:
             ]
 
         train_dataset = self.load_and_cache_examples(train_examples)
-        global_step, tr_loss = self.train(
+        global_step, training_details = self.train(
             train_dataset, output_dir, show_running_loss=show_running_loss, eval_df=eval_df
         )
 
@@ -294,8 +294,8 @@ class ClassificationModel:
 
             scaler = amp.GradScaler()
 
-        model.train()
         for _ in train_iterator:
+            model.train()
             # epoch_iterator = tqdm(train_dataloader, desc="Iteration")
             for step, batch in enumerate(tqdm(train_dataloader, desc=f"Running Training", disable=args["silent"])):
                 batch = tuple(t.to(self.device) for t in batch)
@@ -350,7 +350,7 @@ class ClassificationModel:
                             results, _, _ = self.eval_model(eval_df, verbose=True)
                             for key, value in results.items():
                                 tb_writer.add_scalar("eval_{}".format(key), value, global_step)
-                        tb_writer.add_scalar("lr", scheduler.get_lr()[0], global_step)
+                        tb_writer.add_scalar("lr", scheduler.get_last_lr()[0], global_step)
                         tb_writer.add_scalar("loss", (tr_loss - logging_loss) / args["logging_steps"], global_step)
                         logging_loss = tr_loss
 
@@ -365,7 +365,10 @@ class ClassificationModel:
                         model_to_save.save_pretrained(output_dir_current)
                         self.tokenizer.save_pretrained(output_dir_current)
 
-        return global_step, tr_loss / global_step
+        return (
+            global_step,
+            tr_loss / global_step if not self.args.evaluate_during_training else training_progress_scores,
+        )
 
     def eval_model(self, eval_df, multi_label=False, output_dir=None, verbose=False, **kwargs):
         """
@@ -451,7 +454,9 @@ class ClassificationModel:
 
                 if multi_label:
                     logits = logits.sigmoid()
-                eval_loss += tmp_eval_loss.mean().item()
+                if self.args.n_gpu > 1:
+                    tmp_eval_loss = tmp_eval_loss.mean()
+                eval_loss += tmp_eval_loss.item()
 
             nb_eval_steps += 1
 
@@ -694,7 +699,9 @@ class ClassificationModel:
                 if multi_label:
                     logits = logits.sigmoid()
 
-                eval_loss += tmp_eval_loss.mean().item()
+                if self.args.n_gpu > 1:
+                    tmp_eval_loss = tmp_eval_loss.mean()
+                eval_loss += tmp_eval_loss.item()
 
             nb_eval_steps += 1
 
