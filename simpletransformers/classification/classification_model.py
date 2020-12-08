@@ -1132,7 +1132,7 @@ class ClassificationModel:
         else:
             return {**{"mcc": mcc}, **extra_metrics}, wrong
 
-    def predict(self, to_predict, multi_label=False):
+    def predict(self, to_predict, multi_label=False, verbose=False):
         """
         Performs predictions on a list of text.
 
@@ -1205,7 +1205,7 @@ class ClassificationModel:
                 else:
                     eval_examples = [InputExample(i, text, None, dummy_label) for i, text in enumerate(to_predict)]
             if args.sliding_window:
-                eval_dataset, window_counts = self.load_and_cache_examples(eval_examples, evaluate=True, no_cache=True)
+                eval_dataset, window_counts = self.load_and_cache_examples(eval_examples, evaluate=True, no_cache=True, verbose=verbose)
                 preds = np.empty((len(eval_dataset), self.num_labels))
                 if multi_label:
                     out_label_ids = np.empty((len(eval_dataset), self.num_labels))
@@ -1213,7 +1213,7 @@ class ClassificationModel:
                     out_label_ids = np.empty((len(eval_dataset)))
             else:
                 eval_dataset = self.load_and_cache_examples(
-                    eval_examples, evaluate=True, multi_label=multi_label, no_cache=True
+                    eval_examples, evaluate=True, multi_label=multi_label, no_cache=True, verbose=verbose
                 )
 
             eval_sampler = SequentialSampler(eval_dataset)
