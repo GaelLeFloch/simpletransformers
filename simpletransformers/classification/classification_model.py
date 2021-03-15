@@ -1146,6 +1146,7 @@ class ClassificationModel:
 
         model = self.model
         args = self.args
+        print("predict")
 
         eval_loss = 0.0
         nb_eval_steps = 0
@@ -1278,10 +1279,14 @@ class ClassificationModel:
 
                         if self.args.fp16:
                             with amp.autocast():
+                                print("model**")
                                 outputs = model(**inputs)
+                                print("aftermodel**")
                                 tmp_eval_loss, logits = outputs[:2]
                         else:
+                            print("model**")
                             outputs = model(**inputs)
+                            print("aftermodel**")
                             tmp_eval_loss, logits = outputs[:2]
 
                         if multi_label:
