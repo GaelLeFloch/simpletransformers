@@ -1151,16 +1151,21 @@ class ClassificationModel:
         eval_loss = 0.0
         nb_eval_steps = 0
         preds = np.empty((len(to_predict), self.num_labels))
+        print("preds = np")
         if multi_label:
+            print("multi_label")
             out_label_ids = np.empty((len(to_predict), self.num_labels))
         else:
+            print("multi_label else")
             out_label_ids = np.empty((len(to_predict)))
 
         if not multi_label and self.args.onnx:
+            print("not multi_label onnx")
             model_inputs = self.tokenizer.batch_encode_plus(
                 to_predict, return_tensors="pt", padding=True, truncation=True
             )
 
+            print("not multi_label onnx for")
             for i, (input_ids, attention_mask) in enumerate(
                 zip(model_inputs["input_ids"], model_inputs["attention_mask"])
             ):
@@ -1181,6 +1186,7 @@ class ClassificationModel:
             preds = np.argmax(preds, axis=1)
 
         else:
+            print("not multi_label onnx else")
             self._move_model_to_device()
             dummy_label = 0 if not self.args.labels_map else next(iter(self.args.labels_map.keys()))
 
@@ -1188,6 +1194,7 @@ class ClassificationModel:
                 model = torch.nn.DataParallel(model)
 
             if multi_label:
+                print("not multi_label onnx else multilabel")
                 if isinstance(to_predict[0], list):
                     eval_examples = [
                         InputExample(i, text[0], text[1], [dummy_label for i in range(self.num_labels)])
@@ -1199,12 +1206,15 @@ class ClassificationModel:
                         for i, text in enumerate(to_predict)
                     ]
             else:
+                print("not multi_label onnx else multilabel else")
                 if isinstance(to_predict[0], list):
                     eval_examples = [
                         InputExample(i, text[0], text[1], dummy_label) for i, text in enumerate(to_predict)
                     ]
                 else:
                     eval_examples = [InputExample(i, text, None, dummy_label) for i, text in enumerate(to_predict)]
+
+            print("not multi_label onnx else multilabel end")
             if args.sliding_window:
                 eval_dataset, window_counts = self.load_and_cache_examples(eval_examples, evaluate=True, no_cache=True, verbose=verbose)
                 preds = np.empty((len(eval_dataset), self.num_labels))
@@ -1224,6 +1234,7 @@ class ClassificationModel:
                 from torch.cuda import amp
 
             if self.config.output_hidden_states:
+                print("config output hidden states")
                 model.eval()
                 preds = None
                 out_label_ids = None
@@ -1232,6 +1243,7 @@ class ClassificationModel:
                     with torch.no_grad():
                         inputs = self._get_inputs_dict(batch)
 
+                        print("config output hidden states if")
                         if self.args.fp16:
                             with amp.autocast():
                                 outputs = model(**inputs)
@@ -1241,6 +1253,7 @@ class ClassificationModel:
                             tmp_eval_loss, logits = outputs[:2]
                         embedding_outputs, layer_hidden_states = outputs[2][0], outputs[2][1:]
 
+                        print("config output hidden states if2")
                         if multi_label:
                             logits = logits.sigmoid()
 
@@ -1251,6 +1264,7 @@ class ClassificationModel:
                     nb_eval_steps += 1
 
                     if preds is None:
+                        print("config output hidden states pred is none")
                         preds = logits.detach().cpu().numpy()
                         out_label_ids = inputs["labels"].detach().cpu().numpy()
                         all_layer_hidden_states = np.array(
@@ -1258,6 +1272,7 @@ class ClassificationModel:
                         )
                         all_embedding_outputs = embedding_outputs.detach().cpu().numpy()
                     else:
+                        print("config output hidden states pred is not none")
                         # preds = np.append(preds, logits.detach().cpu().numpy(), axis=0)
                         # out_label_ids = np.append(out_label_ids, inputs["labels"].detach().cpu().numpy(), axis=0)
                         all_layer_hidden_states = np.append(
@@ -1269,8 +1284,10 @@ class ClassificationModel:
                             all_embedding_outputs, embedding_outputs.detach().cpu().numpy(), axis=0
                         )
             else:
+                print("config output hidden states else")
                 n_batches = len(eval_dataloader)
                 for i, batch in enumerate(tqdm(eval_dataloader, disable=args.silent)):
+                    print("config output hidden states else for")
                     model.eval()
                     # batch = tuple(t.to(device) for t in batch)
 
@@ -1310,6 +1327,7 @@ class ClassificationModel:
                     #     preds = np.append(preds, logits.detach().cpu().numpy(), axis=0)
                     #     out_label_ids = np.append(out_label_ids, inputs["labels"].detach().cpu().numpy(), axis=0)
 
+            print("config output hidden states else for after")
             eval_loss = eval_loss / nb_eval_steps
 
             if args.sliding_window:
@@ -1336,6 +1354,7 @@ class ClassificationModel:
                 preds = np.squeeze(preds)
                 model_outputs = preds
             else:
+                print("else slesel")
                 model_outputs = preds
                 if multi_label:
                     if isinstance(args.threshold, list):
